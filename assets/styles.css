@@ -159,6 +159,11 @@ body {
   gap: 12px;
 }
 
+.brand-link {
+  text-decoration: none;
+  color: inherit;
+}
+
 .logo {
   width: 40px;
   height: 40px;

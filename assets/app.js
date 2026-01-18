@@ -372,7 +372,16 @@ async function openProject(projectId) {
 }
 
 async function createProjectAndOpen() {
-  const project = createDefaultProject();
+  const name = await promptModal({
+    title: "Название проекта",
+    placeholder: "Мой проект",
+    confirmText: "Создать"
+  });
+  if (name === null) {
+    return;
+  }
+  const trimmed = name.trim();
+  const project = createDefaultProject(undefined, trimmed || "Без названия");
   await saveProject(project);
   location.hash = `#/p/${project.projectId}`;
 }
@@ -386,11 +395,11 @@ function openEphemeralProject() {
   renderProject();
 }
 
-function createDefaultProject(projectId) {
+function createDefaultProject(projectId, title) {
   const id = projectId || crypto.randomUUID();
   return {
     projectId: id,
-    title: "Без названия",
+    title: title || "Без названия",
     files: [
       {
         name: "main.py",
