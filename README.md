@@ -13,6 +13,7 @@ This is a static, frontend-only Python IDE designed for GitHub Pages. It uses Py
 - All assets are self-hosted in `pyodide-0.29.1/pyodide`.
 - No external network requests are made at runtime.
 - Service worker adds COOP/COEP headers (optional cross-origin isolation).
+- Browser fallbacks cover Safari and privacy modes (gzip via fflate, clipboard execCommand, and in-memory storage if IndexedDB is blocked).
 
 ## Structure
 

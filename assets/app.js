@@ -1,3 +1,5 @@
+import { gzipSync, gunzipSync } from "./fflate.esm.js";
+
 const CONFIG = {
   RUN_TIMEOUT_MS: 10000,
   MAX_OUTPUT_BYTES: 2000000,
@@ -9,8 +11,50 @@ const CONFIG = {
 };
 
 const VALID_FILENAME = /^[A-Za-z0-9._-]+$/;
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+const encoder = typeof TextEncoder !== "undefined"
+  ? new TextEncoder()
+  : {
+      encode: (text) => {
+        const utf8 = unescape(encodeURIComponent(String(text)));
+        const bytes = new Uint8Array(utf8.length);
+        for (let i = 0; i < utf8.length; i += 1) {
+          bytes[i] = utf8.charCodeAt(i);
+        }
+        return bytes;
+      }
+    };
+const decoder = typeof TextDecoder !== "undefined"
+  ? new TextDecoder()
+  : {
+      decode: (input) => {
+        const bytes = input instanceof Uint8Array ? input : new Uint8Array(input || []);
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        return decodeURIComponent(escape(binary));
+      }
+    };
+const supportsPointerEvents = "PointerEvent" in window;
+const supportsPassiveEvents = (() => {
+  let supported = false;
+  try {
+    const noop = () => {};
+    const opts = Object.defineProperty({}, "passive", {
+      get() {
+        supported = true;
+        return true;
+      }
+    });
+    window.addEventListener("test-passive", noop, opts);
+    window.removeEventListener("test-passive", noop, opts);
+  } catch (error) {
+    supported = false;
+  }
+  return supported;
+})();
+const touchEventOptions = supportsPassiveEvents ? { passive: false } : false;
 const RUN_STATUS_LABELS = {
   idle: "Ожидание",
   running: "Выполняется",
@@ -140,10 +184,104 @@ const turtleInput = {
   dragTarget: "screen"
 };
 
+function createUuid() {
+  if (typeof crypto !== "undefined") {
+    if (typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    if (typeof crypto.getRandomValues === "function") {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0"));
+      return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
+    }
+  }
+  const rand = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).slice(1);
+  return `${rand()}${rand()}-${rand()}-${rand()}-${rand()}-${rand()}${rand()}${rand()}`;
+}
+
+const memoryDb = {
+  projects: new Map(),
+  blobs: new Map(),
+  drafts: new Map(),
+  recent: new Map()
+};
+
+function getStoreKey(storeName, value) {
+  if (!value) {
+    return null;
+  }
+  if (storeName === "projects") {
+    return value.projectId;
+  }
+  if (storeName === "blobs") {
+    return value.blobId;
+  }
+  if (storeName === "drafts") {
+    return value.key;
+  }
+  if (storeName === "recent") {
+    return value.key;
+  }
+  return null;
+}
+
+function getMemoryStore(storeName) {
+  return memoryDb[storeName] || null;
+}
+
+function safeSessionGet(key) {
+  try {
+    return sessionStorage.getItem(key);
+  } catch (error) {
+    return null;
+  }
+}
+
+function safeSessionSet(key, value) {
+  try {
+    sessionStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function safeSessionRemove(key) {
+  try {
+    sessionStorage.removeItem(key);
+  } catch (error) {
+    // Ignore.
+  }
+}
+
+function safeLocalGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    return null;
+  }
+}
+
+function safeLocalSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 init();
 
 async function init() {
   showGuard(true);
+  if (!("Worker" in window) || !("WebAssembly" in window)) {
+    setGuardMessage("Unsupported browser", "This app needs WebAssembly and Web Workers.");
+    return;
+  }
   bindUi();
   const swEnabled = await registerServiceWorker();
   const compat = await ensureRuntimeCompatibility(swEnabled);
@@ -151,6 +289,9 @@ async function init() {
     return;
   }
   state.db = await openDb();
+  if (!state.db) {
+    showToast("Storage fallback: changes will not persist in this browser.");
+  }
   loadSettings();
   initWorker();
   await router();
@@ -158,8 +299,8 @@ async function init() {
 }
 
 async function ensureRuntimeCompatibility(swEnabled) {
-  if (crossOriginIsolated) {
-    sessionStorage.removeItem(COI_RELOAD_KEY);
+  if (typeof globalThis !== "undefined" && globalThis.crossOriginIsolated === true) {
+    safeSessionRemove(COI_RELOAD_KEY);
     return { ok: true, reloading: false };
   }
   if (!swEnabled) {
@@ -167,13 +308,15 @@ async function ensureRuntimeCompatibility(swEnabled) {
   }
 
   await waitForServiceWorkerReady();
-  if (crossOriginIsolated) {
-    sessionStorage.removeItem(COI_RELOAD_KEY);
+  if (typeof globalThis !== "undefined" && globalThis.crossOriginIsolated === true) {
+    safeSessionRemove(COI_RELOAD_KEY);
     return { ok: true, reloading: false };
   }
 
-  if (!sessionStorage.getItem(COI_RELOAD_KEY)) {
-    sessionStorage.setItem(COI_RELOAD_KEY, "1");
+  if (!safeSessionGet(COI_RELOAD_KEY)) {
+    if (!safeSessionSet(COI_RELOAD_KEY, "1")) {
+      return { ok: true, reloading: false };
+    }
     location.reload();
     return { ok: false, reloading: true };
   }
@@ -230,10 +373,20 @@ function bindUi() {
 
   els.turtleClear.addEventListener("click", () => clearTurtleCanvas());
   if (els.turtleCanvas) {
-    els.turtleCanvas.addEventListener("pointerdown", onTurtlePointerDown);
-    els.turtleCanvas.addEventListener("pointermove", onTurtlePointerMove);
-    els.turtleCanvas.addEventListener("pointerup", onTurtlePointerUp);
-    els.turtleCanvas.addEventListener("pointercancel", onTurtlePointerUp);
+    if (supportsPointerEvents) {
+      els.turtleCanvas.addEventListener("pointerdown", onTurtlePointerDown);
+      els.turtleCanvas.addEventListener("pointermove", onTurtlePointerMove);
+      els.turtleCanvas.addEventListener("pointerup", onTurtlePointerUp);
+      els.turtleCanvas.addEventListener("pointercancel", onTurtlePointerUp);
+    } else {
+      els.turtleCanvas.addEventListener("mousedown", onTurtlePointerDown);
+      window.addEventListener("mousemove", onTurtlePointerMove);
+      window.addEventListener("mouseup", onTurtlePointerUp);
+      els.turtleCanvas.addEventListener("touchstart", onTurtlePointerDown, touchEventOptions);
+      els.turtleCanvas.addEventListener("touchmove", onTurtlePointerMove, touchEventOptions);
+      els.turtleCanvas.addEventListener("touchend", onTurtlePointerUp);
+      els.turtleCanvas.addEventListener("touchcancel", onTurtlePointerUp);
+    }
     els.turtleCanvas.addEventListener("blur", () => {
       turtleInput.active = false;
     });
@@ -265,6 +418,17 @@ async function registerServiceWorker() {
 
 function showGuard(show) {
   els.guard.classList.toggle("hidden", !show);
+}
+
+function setGuardMessage(title, message) {
+  const heading = els.guard.querySelector("h2");
+  const text = els.guard.querySelector("p");
+  if (heading) {
+    heading.textContent = title;
+  }
+  if (text) {
+    text.textContent = message;
+  }
 }
 
 function showView(view) {
@@ -396,7 +560,7 @@ function openEphemeralProject() {
 }
 
 function createDefaultProject(projectId, title) {
-  const id = projectId || crypto.randomUUID();
+  const id = projectId || createUuid();
   return {
     projectId: id,
     title: title || "Без названия",
@@ -998,7 +1162,7 @@ async function addAsset(file) {
     showToast(`Ресурс уже существует: ${name}`);
     return;
   }
-  const blobId = crypto.randomUUID();
+  const blobId = createUuid();
   await dbPut("blobs", { blobId, data: file });
   state.project.assets.push({ name, mime: file.type || "application/octet-stream", blobId });
   scheduleSave();
@@ -1074,7 +1238,7 @@ function applyEditorSettings() {
 }
 
 function loadSettings() {
-  const raw = localStorage.getItem("shp-settings");
+  const raw = safeLocalGet("shp-settings");
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
@@ -1090,7 +1254,7 @@ function loadSettings() {
 }
 
 function saveSettings() {
-  localStorage.setItem("shp-settings", JSON.stringify(state.settings));
+  safeLocalSet("shp-settings", JSON.stringify(state.settings));
 }
 
 function updateSaveIndicator(text) {
@@ -1242,48 +1406,82 @@ function validateShareLimits(files) {
 async function buildPayload(payloadBytes) {
   let prefix = "u";
   let bodyBytes = payloadBytes;
-  if ("CompressionStream" in window) {
-    try {
-      const compressed = await compressBytes(payloadBytes);
+  try {
+    const compressed = await compressBytes(payloadBytes);
+    if (compressed && compressed.length < payloadBytes.length) {
       prefix = "g";
       bodyBytes = compressed;
-    } catch (error) {
-      console.warn("Compression failed", error);
     }
+  } catch (error) {
+    console.warn("Compression failed", error);
   }
   const payload = `${prefix}.${base64UrlEncode(bodyBytes)}`;
-  const hash = await crypto.subtle.digest("SHA-256", bodyBytes);
-  const shareId = base64UrlEncode(new Uint8Array(hash)).slice(0, 12);
+  const shareId = await computeShareId(bodyBytes);
   return { payload, shareId };
 }
 
 async function decodePayload(payload) {
   const [prefix, data] = payload.split(".");
   const bytes = base64UrlDecode(data || payload);
-  if (prefix === "g" && "DecompressionStream" in window) {
-    const decompressed = await decompressBytes(bytes);
-    return JSON.parse(decoder.decode(decompressed));
+  if (prefix === "g") {
+    try {
+      const decompressed = await decompressBytes(bytes);
+      return JSON.parse(decoder.decode(decompressed));
+    } catch (error) {
+      console.warn("Decompression failed", error);
+    }
   }
   return JSON.parse(decoder.decode(bytes));
 }
 
 async function compressBytes(bytes) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
-  const response = new Response(stream);
-  return new Uint8Array(await response.arrayBuffer());
+  if ("CompressionStream" in window && typeof Blob !== "undefined" && Blob.prototype && Blob.prototype.stream) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+    const response = new Response(stream);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+  return gzipSync(bytes);
 }
 
 async function decompressBytes(bytes) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-  const response = new Response(stream);
-  return new Uint8Array(await response.arrayBuffer());
+  if ("DecompressionStream" in window && typeof Blob !== "undefined" && Blob.prototype && Blob.prototype.stream) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const response = new Response(stream);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+  return gunzipSync(bytes);
+}
+
+async function computeShareId(bytes) {
+  if (typeof crypto !== "undefined" && crypto.subtle && crypto.subtle.digest) {
+    try {
+      const hash = await crypto.subtle.digest("SHA-256", bytes);
+      return base64UrlEncode(new Uint8Array(hash)).slice(0, 12);
+    } catch (error) {
+      // Fall back to non-crypto hash.
+    }
+  }
+  const h1 = hashBytesFNV1a(bytes, 0x811c9dc5);
+  const h2 = hashBytesFNV1a(bytes, 0x811c9dc5 ^ 0xdeadbeef);
+  const hex = h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
+  return hex.slice(0, 12);
+}
+
+function hashBytesFNV1a(bytes, seed) {
+  let hash = seed >>> 0;
+  for (let i = 0; i < bytes.length; i += 1) {
+    hash ^= bytes[i];
+    hash = Math.imul(hash, 0x01000193);
+    hash >>>= 0;
+  }
+  return hash >>> 0;
 }
 
 function base64UrlEncode(bytes) {
   let binary = "";
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.slice(i, i + chunk));
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
@@ -1299,13 +1497,38 @@ function base64UrlDecode(text) {
   return bytes;
 }
 
+async function readBlobData(blob) {
+  if (!blob) {
+    return new Uint8Array();
+  }
+  if (blob instanceof Uint8Array) {
+    return blob;
+  }
+  if (ArrayBuffer.isView(blob)) {
+    return new Uint8Array(blob.buffer.slice(blob.byteOffset, blob.byteOffset + blob.byteLength));
+  }
+  if (blob instanceof ArrayBuffer) {
+    return new Uint8Array(blob);
+  }
+  if (blob.arrayBuffer) {
+    const buffer = await blob.arrayBuffer();
+    return new Uint8Array(buffer);
+  }
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(new Uint8Array(reader.result || []));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(blob);
+  });
+}
+
 async function remixSnapshot() {
   if (state.mode !== "snapshot") {
     return;
   }
   const files = getEffectiveFiles();
   const project = {
-    projectId: crypto.randomUUID(),
+    projectId: createUuid(),
     title: state.snapshot.baseline.title || "Ремикс",
     files,
     assets: [],
@@ -1373,8 +1596,8 @@ async function exportAsJson() {
     if (!blobRecord) {
       continue;
     }
-    const buffer = await blobRecord.data.arrayBuffer();
-    const base64 = base64UrlEncode(new Uint8Array(buffer));
+    const buffer = await readBlobData(blobRecord.data);
+    const base64 = base64UrlEncode(buffer);
     assets.push({
       name: asset.name,
       mime: asset.mime,
@@ -1403,7 +1626,7 @@ async function exportAsZip() {
     if (!blobRecord) {
       continue;
     }
-    const buffer = new Uint8Array(await blobRecord.data.arrayBuffer());
+    const buffer = await readBlobData(blobRecord.data);
     entries.push({ name: asset.name, data: buffer });
   }
 
@@ -1420,7 +1643,7 @@ function downloadBlob(blob, filename) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function createZip(entries) {
@@ -1616,6 +1839,13 @@ function spawnWorker() {
   workerGeneration = generation;
   const workerUrl = new URL("assets/worker.js", location.href).toString();
 
+  if (typeof fetch !== "function") {
+    const fallbackUrl = `${workerUrl}?v=${Date.now()}`;
+    const worker = new Worker(fallbackUrl);
+    registerWorker(worker);
+    return;
+  }
+
   fetch(workerUrl, { cache: "no-store" })
     .then((response) => {
       if (!response.ok) {
@@ -1630,7 +1860,7 @@ function spawnWorker() {
       const blob = new Blob([code], { type: "text/javascript" });
       const blobUrl = URL.createObjectURL(blob);
       const worker = new Worker(blobUrl);
-      URL.revokeObjectURL(blobUrl);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
       registerWorker(worker);
     })
     .catch(() => {
@@ -1795,10 +2025,10 @@ async function loadAssets() {
     if (!record) {
       continue;
     }
-    const buffer = await record.data.arrayBuffer();
+    const buffer = await readBlobData(record.data);
     assets.push({
       name: asset.name,
-      data: new Uint8Array(buffer)
+      data: buffer
     });
   }
   return assets;
@@ -2203,11 +2433,57 @@ function headingFromMove(event, fallback, mode) {
   return standard;
 }
 
+function isTouchEvent(event) {
+  return !!(event && (event.touches || event.changedTouches));
+}
+
+function getEventClientPoint(event) {
+  if (event && event.touches && event.touches.length) {
+    return { clientX: event.touches[0].clientX, clientY: event.touches[0].clientY };
+  }
+  if (event && event.changedTouches && event.changedTouches.length) {
+    return { clientX: event.changedTouches[0].clientX, clientY: event.changedTouches[0].clientY };
+  }
+  const clientX = event && typeof event.clientX === "number" ? event.clientX : 0;
+  const clientY = event && typeof event.clientY === "number" ? event.clientY : 0;
+  return { clientX, clientY };
+}
+
+function getEventPointerId(event) {
+  if (supportsPointerEvents && event && typeof event.pointerId === "number") {
+    return event.pointerId;
+  }
+  if (event && event.changedTouches && event.changedTouches.length) {
+    return event.changedTouches[0].identifier;
+  }
+  return null;
+}
+
+function getEventButton(event) {
+  if (isTouchEvent(event)) {
+    return 0;
+  }
+  if (event && typeof event.button === "number") {
+    return event.button;
+  }
+  if (event && typeof event.which === "number") {
+    if (event.which === 2) {
+      return 1;
+    }
+    if (event.which === 3) {
+      return 2;
+    }
+    return 0;
+  }
+  return 0;
+}
+
 function buttonFromPointer(event) {
-  if (event.button === 1) {
+  const button = getEventButton(event);
+  if (button === 1) {
     return 2;
   }
-  if (event.button === 2) {
+  if (button === 2) {
     return 3;
   }
   return 1;
@@ -2217,9 +2493,10 @@ function getCanvasPoint(event) {
   const rect = els.turtleCanvas.getBoundingClientRect();
   const scaleX = els.turtleCanvas.width / rect.width;
   const scaleY = els.turtleCanvas.height / rect.height;
+  const point = getEventClientPoint(event);
   return {
-    x: (event.clientX - rect.left) * scaleX,
-    y: (event.clientY - rect.top) * scaleY
+    x: (point.clientX - rect.left) * scaleX,
+    y: (point.clientY - rect.top) * scaleY
   };
 }
 
@@ -2245,6 +2522,9 @@ function onTurtlePointerDown(event) {
   if (!els.turtleCanvas) {
     return;
   }
+  if (isTouchEvent(event) && event.cancelable) {
+    event.preventDefault();
+  }
   els.turtleCanvas.focus();
   turtleInput.active = true;
   const renderer = getTurtleRenderer();
@@ -2255,7 +2535,10 @@ function onTurtlePointerDown(event) {
   turtleInput.dragging = target === "turtle";
   turtleInput.dragButton = button;
   turtleInput.dragTarget = target;
-  els.turtleCanvas.setPointerCapture(event.pointerId);
+  const pointerId = getEventPointerId(event);
+  if (supportsPointerEvents && pointerId !== null && els.turtleCanvas.setPointerCapture) {
+    els.turtleCanvas.setPointerCapture(pointerId);
+  }
   sendTurtleInputEvent({
     type: "mouse",
     kind: "click",
@@ -2269,6 +2552,9 @@ function onTurtlePointerDown(event) {
 function onTurtlePointerMove(event) {
   if (!turtleInput.dragging || !els.turtleCanvas) {
     return;
+  }
+  if (isTouchEvent(event) && event.cancelable) {
+    event.preventDefault();
   }
   const renderer = getTurtleRenderer();
   const point = getCanvasPoint(event);
@@ -2287,8 +2573,17 @@ function onTurtlePointerUp(event) {
   if (!els.turtleCanvas) {
     return;
   }
-  if (els.turtleCanvas.hasPointerCapture(event.pointerId)) {
-    els.turtleCanvas.releasePointerCapture(event.pointerId);
+  if (isTouchEvent(event) && event.cancelable) {
+    event.preventDefault();
+  }
+  const pointerId = getEventPointerId(event);
+  if (
+    supportsPointerEvents &&
+    pointerId !== null &&
+    els.turtleCanvas.hasPointerCapture &&
+    els.turtleCanvas.hasPointerCapture(pointerId)
+  ) {
+    els.turtleCanvas.releasePointerCapture(pointerId);
   }
   const renderer = getTurtleRenderer();
   const point = getCanvasPoint(event);
@@ -2526,16 +2821,51 @@ function showToast(message) {
 
 async function copyToClipboard(text) {
   try {
-    await navigator.clipboard.writeText(text);
-    showToast("Ссылка скопирована.");
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      showToast("Ссылка скопирована.");
+      return;
+    }
   } catch (error) {
+    // Fall back to manual copy.
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-1000px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch (error) {
+    ok = false;
+  }
+  textarea.remove();
+  if (ok) {
+    showToast("Ссылка скопирована.");
+  } else {
     showToast("Не удалось скопировать.");
   }
 }
 
 async function openDb() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open("mshp-turtle", 1);
+  if (!("indexedDB" in window)) {
+    return null;
+  }
+  return new Promise((resolve) => {
+    let request = null;
+    try {
+      request = indexedDB.open("mshp-turtle", 1);
+    } catch (error) {
+      console.warn("IndexedDB open failed", error);
+      resolve(null);
+      return;
+    }
     request.onupgradeneeded = () => {
       const db = request.result;
       db.createObjectStore("projects", { keyPath: "projectId" });
@@ -2543,37 +2873,89 @@ async function openDb() {
       db.createObjectStore("drafts", { keyPath: "key" });
       db.createObjectStore("recent", { keyPath: "key" });
     };
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      console.warn("IndexedDB error", request.error);
+      resolve(null);
+    };
     request.onsuccess = () => resolve(request.result);
   });
 }
 
 async function dbGet(storeName, key) {
-  return new Promise((resolve, reject) => {
-    const tx = state.db.transaction(storeName, "readonly");
-    const store = tx.objectStore(storeName);
-    const request = store.get(key);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
+  if (!state.db) {
+    const store = getMemoryStore(storeName);
+    return store ? store.get(key) || null : null;
+  }
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = state.db.transaction(storeName, "readonly");
+      const store = tx.objectStore(storeName);
+      const request = store.get(key);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.warn("IndexedDB get failed", error);
+    state.db = null;
+    const store = getMemoryStore(storeName);
+    return store ? store.get(key) || null : null;
+  }
 }
 
 async function dbPut(storeName, value) {
-  return new Promise((resolve, reject) => {
-    const tx = state.db.transaction(storeName, "readwrite");
-    const store = tx.objectStore(storeName);
-    const request = store.put(value);
-    request.onsuccess = () => resolve(true);
-    request.onerror = () => reject(request.error);
-  });
+  if (!state.db) {
+    const store = getMemoryStore(storeName);
+    const key = getStoreKey(storeName, value);
+    if (store && key) {
+      store.set(key, value);
+      return true;
+    }
+    return false;
+  }
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = state.db.transaction(storeName, "readwrite");
+      const store = tx.objectStore(storeName);
+      const request = store.put(value);
+      request.onsuccess = () => resolve(true);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.warn("IndexedDB put failed", error);
+    state.db = null;
+    const store = getMemoryStore(storeName);
+    const key = getStoreKey(storeName, value);
+    if (store && key) {
+      store.set(key, value);
+      return true;
+    }
+    return false;
+  }
 }
 
 async function dbDelete(storeName, key) {
-  return new Promise((resolve, reject) => {
-    const tx = state.db.transaction(storeName, "readwrite");
-    const store = tx.objectStore(storeName);
-    const request = store.delete(key);
-    request.onsuccess = () => resolve(true);
-    request.onerror = () => reject(request.error);
-  });
+  if (!state.db) {
+    const store = getMemoryStore(storeName);
+    if (store) {
+      store.delete(key);
+    }
+    return true;
+  }
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = state.db.transaction(storeName, "readwrite");
+      const store = tx.objectStore(storeName);
+      const request = store.delete(key);
+      request.onsuccess = () => resolve(true);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.warn("IndexedDB delete failed", error);
+    state.db = null;
+    const store = getMemoryStore(storeName);
+    if (store) {
+      store.delete(key);
+    }
+    return true;
+  }
 }
