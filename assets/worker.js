@@ -2,6 +2,44 @@ let pyodide = null;
 let pyodideReady = false;
 let stdinResolver = null;
 const stdinQueue = [];
+let stdinShared = null;
+let stdinHeader = null;
+let stdinBuffer = null;
+let stdinMode = "message";
+const forceShared =
+  typeof self !== "undefined" &&
+  self.navigator &&
+  (/Firefox/i.test(self.navigator.userAgent || "") ||
+    (/Safari/i.test(self.navigator.userAgent || "") && !/Chrome|Chromium|Edg/i.test(self.navigator.userAgent || "")));
+if (typeof self !== "undefined") {
+  self.force_shared = forceShared;
+}
+const stdinDecoder = typeof TextDecoder !== "undefined"
+  ? new TextDecoder()
+  : {
+      decode: (input) => {
+        const bytes = input instanceof Uint8Array ? input : new Uint8Array(input || []);
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        return decodeURIComponent(escape(binary));
+      }
+    };
+
+function decodeUtf8Fallback(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  try {
+    return decodeURIComponent(escape(binary));
+  } catch (error) {
+    return binary;
+  }
+}
 
 self.onmessage = async (event) => {
   const message = event.data;
@@ -41,11 +79,64 @@ function requestStdin() {
   }
   return new Promise((resolve) => {
     stdinResolver = resolve;
-    postMessage({ type: "stdin_request" });
+    postMessage({ type: "stdin_request", mode: "message" });
   });
 }
 
+function setupSharedStdin(shared) {
+  if (!shared || typeof Atomics === "undefined" || typeof Atomics.wait !== "function") {
+    return false;
+  }
+  try {
+    stdinShared = shared;
+    stdinHeader = new Int32Array(shared, 0, 2);
+    stdinBuffer = new Uint8Array(shared, 8);
+  } catch (error) {
+    stdinShared = null;
+    stdinHeader = null;
+    stdinBuffer = null;
+    return false;
+  }
+  stdinMode = "shared";
+  const readShared = () => {
+    const flag = Atomics.load(stdinHeader, 0);
+    if (flag !== 1) {
+      return null;
+    }
+    const length = Atomics.load(stdinHeader, 1);
+    const safeLength = Number.isFinite(length) ? Math.max(0, Math.min(length, stdinBuffer.length)) : 0;
+    const slice = stdinBuffer.subarray(0, safeLength);
+    Atomics.store(stdinHeader, 0, 0);
+    Atomics.store(stdinHeader, 1, 0);
+    const decoded = String(stdinDecoder.decode(slice));
+    if (!decoded && safeLength > 0) {
+      return decodeUtf8Fallback(slice);
+    }
+    return decoded;
+  };
+  self.stdin_blocking = () => {
+    if (!stdinHeader || !stdinBuffer) {
+      return "";
+    }
+    const ready = readShared();
+    if (ready !== null) {
+      return ready;
+    }
+    postMessage({ type: "stdin_request", mode: "shared" });
+    Atomics.wait(stdinHeader, 0, 0);
+    const next = readShared();
+    return next === null ? "" : next;
+  };
+  return true;
+}
+
 async function initializeRuntime(message) {
+  self.stdin_blocking = null;
+  if (setupSharedStdin(message.stdinShared)) {
+    stdinMode = "shared";
+  } else {
+    stdinMode = "message";
+  }
   if (!pyodideReady) {
     const indexURL = message.indexURL;
     importScripts(indexURL + "pyodide.js");
@@ -82,6 +173,21 @@ async function initializeRuntime(message) {
     pyodideReady = true;
   }
 
+  stdinMode = "message";
+  self.stdin_mode = stdinMode;
+  self.set_stdin_mode = (mode) => {
+    const next = mode === "shared" && stdinShared ? "shared" : "message";
+    if (stdinMode === next) {
+      return;
+    }
+    stdinMode = next;
+    self.stdin_mode = stdinMode;
+    postMessage({ type: "stdin_mode", mode: stdinMode });
+  };
+  postMessage({ type: "stdin_mode", mode: stdinMode });
+  if (forceShared && stdinShared) {
+    self.set_stdin_mode("shared");
+  }
   postMessage({ type: "ready" });
 }
 
@@ -149,12 +255,32 @@ function buildRunner(entry) {
   const entryLiteral = JSON.stringify(entry);
   return `
 import runpy, sys, os, builtins, js
-from pyodide.ffi import run_sync
+try:
+    from pyodide.ffi import run_sync
+except Exception:
+    run_sync = None
 
 def _input(prompt=""):
     if prompt:
         js.send_stdout(prompt)
-    return run_sync(js.stdin())
+    force_shared = bool(getattr(js, "force_shared", False))
+    if run_sync and not force_shared:
+        try:
+            return run_sync(js.stdin())
+        except Exception:
+            try:
+                setter = getattr(js, "set_stdin_mode", None)
+                if setter:
+                    setter("shared")
+            except Exception:
+                pass
+    blocking = getattr(js, "stdin_blocking", None)
+    if blocking:
+        try:
+            return blocking()
+        except Exception:
+            pass
+    return ""
 
 builtins.input = _input
 sys.path.insert(0, os.getcwd())
@@ -195,7 +321,9 @@ def _emit_turtle(state):
         "heading": state.heading,
         "visible": state.visible,
         "speed": state.speed_value,
-        "mode": state.screen.mode_name
+        "mode": state.screen.mode_name,
+        "shape": state.shape_name,
+        "stretch": [state.stretch_wid, state.stretch_len]
     })
 
 def _emit_move(state, x1, y1, x2, y2, pendown):
@@ -739,6 +867,7 @@ class _TurtleState:
             return self.shape_name
         self.shape_name = str(name)
         self.screen.shapes.add(self.shape_name)
+        _emit_turtle(self)
         return self.shape_name
 
     def shapesize(self, stretch_wid=None, stretch_len=None, outline=None):
@@ -750,6 +879,7 @@ class _TurtleState:
         self.stretch_len = float(stretch_len)
         if outline is not None:
             self.outline = outline
+        _emit_turtle(self)
         return (self.stretch_wid, self.stretch_len, self.outline)
 
     def turtlesize(self, stretch_wid=None, stretch_len=None, outline=None):

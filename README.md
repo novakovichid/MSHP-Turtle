@@ -1,23 +1,21 @@
-# MSHP-Turtle (Frontend-only Python IDE)
+# MSHP-Turtle
 
-This is a static, frontend-only Python IDE designed for GitHub Pages. It uses Pyodide in a Web Worker, supports multi-file projects, stdin in the console, turtle drawing on canvas, and immutable share links.
+Project navigation and entry points.
 
-## Quick start
+## Guides
+- User guide: `docs/USER_GUIDE.md`
+- Technical guide: `docs/TECHNICAL_GUIDE.md`
 
-1. Serve the folder locally (any static server).
-2. Open the page in a modern browser.
-3. Create or open a project and click Run.
+## Main entry points
+- App shell: `index.html`
+- UI logic: `assets/app.js`
+- Worker runtime: `assets/worker.js`
+- Styles: `assets/styles.css`
+- Service worker (COI): `sw.js`
 
-## Notes
+## Runtime and assets
+- Pyodide runtime: `pyodide-0.29.1/pyodide/`
+- Fonts: `assets/fonts/`
 
-- All assets are self-hosted in `pyodide-0.29.1/pyodide`.
-- No external network requests are made at runtime.
-- Service worker adds COOP/COEP headers (optional cross-origin isolation).
-- Browser fallbacks cover Safari and privacy modes (gzip via fflate, clipboard execCommand, and in-memory storage if IndexedDB is blocked).
-
-## Structure
-
-- `index.html` - SPA shell
-- `assets/` - CSS/JS and fonts
-- `pyodide-0.29.1/pyodide/` - Pyodide runtime
-- `sw.js` - COI service worker
+## Utilities
+- Local server helper: `serve.bat`

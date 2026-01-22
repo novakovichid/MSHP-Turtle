@@ -350,6 +350,12 @@ body {
   display: flex;
   flex: 1;
   min-height: 0;
+  --code-font: "JetBrains Mono", monospace;
+  --code-font-size: 14px;
+  --code-line-height: 22px;
+  font-family: var(--code-font);
+  font-size: var(--code-font-size);
+  line-height: var(--code-line-height);
 }
 
 .line-numbers {
@@ -357,9 +363,9 @@ body {
   background: rgba(236, 243, 255, 0.95);
   border-right: 1px solid var(--border);
   color: var(--muted);
-  font-family: "JetBrains Mono", monospace;
-  font-size: 12px;
-  line-height: 1.6;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
   text-align: right;
   white-space: pre;
   user-select: none;
@@ -383,9 +389,9 @@ body {
   inset: 0;
   margin: 0;
   padding: 14px 16px;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 14px;
-  line-height: 1.6;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
   color: var(--text);
   white-space: pre-wrap;
   overflow: auto;
@@ -476,9 +482,9 @@ body {
   background: transparent;
   color: transparent;
   caret-color: var(--text);
-  font-family: "JetBrains Mono", monospace;
-  font-size: 14px;
-  line-height: 1.6;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
   padding: 14px 16px;
   resize: none;
   tab-size: 4;

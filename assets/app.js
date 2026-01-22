@@ -9,6 +9,7 @@ const CONFIG = {
   TAB_SIZE: 4,
   WORD_WRAP: true
 };
+const STDIN_SHARED_BYTES = 8192;
 
 const VALID_FILENAME = /^[A-Za-z0-9._-]+$/;
 const encoder = typeof TextEncoder !== "undefined"
@@ -89,6 +90,11 @@ const state = {
   runtimeBlocked: false,
   stdinQueue: [],
   stdinWaiting: false,
+  stdinMode: "message",
+  stdinShared: null,
+  stdinHeader: null,
+  stdinBuffer: null,
+  lastStdinRequestMode: null,
   runTimeout: null,
   hardStopTimer: null,
   outputBytes: 0,
@@ -150,6 +156,30 @@ const els = {
   turtleClear: document.getElementById("turtle-clear")
 };
 
+const DEBUG_ENABLED = typeof location !== "undefined" && location.search.includes("debug=1");
+if (DEBUG_ENABLED && typeof window !== "undefined") {
+  window.__mshpDebug = {
+    getStdinMode: () => state.stdinMode,
+    getStdinWaiting: () => state.stdinWaiting,
+    getLastStdinRequestMode: () => state.lastStdinRequestMode,
+    getStdinHeader: () => {
+      if (!state.stdinHeader) {
+        return null;
+      }
+      const flag = Atomics.load(state.stdinHeader, 0);
+      const length = Atomics.load(state.stdinHeader, 1);
+      return [flag, length];
+    },
+    getStdinBytes: (count = 8) => {
+      if (!state.stdinBuffer) {
+        return null;
+      }
+      return Array.from(state.stdinBuffer.slice(0, count));
+    },
+    writeSharedDebug: (value) => writeSharedStdin(value)
+  };
+}
+
 const turtleRenderer = {
   ready: false,
   canvas: null,
@@ -169,7 +199,10 @@ const turtleRenderer = {
     y: 0,
     heading: 0,
     visible: true,
-    penSize: 2
+    penSize: 2,
+    shape: "classic",
+    stretchWid: 1,
+    stretchLen: 1
   },
   queue: [],
   animating: false,
@@ -1803,6 +1836,14 @@ function submitConsoleInput() {
   }
   els.consoleInput.value = "";
   appendConsole(`${value}\n`, false);
+  if (state.worker && state.workerReady) {
+    if (canUseSharedStdin()) {
+      writeSharedStdin(value);
+    }
+    state.worker.postMessage({ type: "stdin_response", value });
+    state.stdinWaiting = false;
+    return;
+  }
   state.stdinQueue.push(value);
   if (state.stdinWaiting) {
     deliverInput();
@@ -1819,8 +1860,57 @@ function deliverInput() {
     return;
   }
   const value = state.stdinQueue.shift();
+  const usedShared = canUseSharedStdin() && writeSharedStdin(value);
+  if (usedShared && state.stdinMode === "shared") {
+    state.stdinWaiting = false;
+    return;
+  }
   state.worker.postMessage({ type: "stdin_response", value });
   state.stdinWaiting = false;
+}
+
+function resetSharedStdin() {
+  state.stdinShared = null;
+  state.stdinHeader = null;
+  state.stdinBuffer = null;
+  state.stdinMode = "message";
+}
+
+function setupSharedStdin() {
+  resetSharedStdin();
+  if (typeof SharedArrayBuffer !== "function" || typeof Atomics !== "object" || typeof Atomics.notify !== "function") {
+    return null;
+  }
+  try {
+    const shared = new SharedArrayBuffer(STDIN_SHARED_BYTES + 8);
+    state.stdinShared = shared;
+    state.stdinHeader = new Int32Array(shared, 0, 2);
+    state.stdinBuffer = new Uint8Array(shared, 8);
+    return shared;
+  } catch (error) {
+    resetSharedStdin();
+    return null;
+  }
+}
+
+function canUseSharedStdin() {
+  return state.stdinHeader && state.stdinBuffer && typeof Atomics === "object" && typeof Atomics.notify === "function";
+}
+
+function writeSharedStdin(value) {
+  if (!state.stdinHeader || !state.stdinBuffer || typeof Atomics !== "object" || typeof Atomics.notify !== "function") {
+    return false;
+  }
+  const bytes = encoder.encode(String(value ?? ""));
+  const maxLength = state.stdinBuffer.length;
+  const length = Math.min(bytes.length, maxLength);
+  if (length > 0) {
+    state.stdinBuffer.set(bytes.subarray(0, length), 0);
+  }
+  Atomics.store(state.stdinHeader, 1, length);
+  Atomics.store(state.stdinHeader, 0, 1);
+  Atomics.notify(state.stdinHeader, 0, 1);
+  return true;
 }
 
 function initWorker() {
@@ -1833,6 +1923,7 @@ function spawnWorker() {
   }
   state.worker = null;
   state.workerReady = false;
+  resetSharedStdin();
   showGuard(true);
 
   const generation = workerGeneration + 1;
@@ -1877,9 +1968,11 @@ function registerWorker(worker) {
   state.worker = worker;
   state.workerReady = false;
   worker.addEventListener("message", (event) => handleWorkerMessage(event.data));
+  const stdinShared = setupSharedStdin();
   worker.postMessage({
     type: "init",
-    indexURL: new URL("pyodide-0.29.1/pyodide/", location.href).toString()
+    indexURL: new URL("pyodide-0.29.1/pyodide/", location.href).toString(),
+    stdinShared
   });
 }
 
@@ -1917,8 +2010,16 @@ function handleWorkerMessage(message) {
     }
     return;
   }
+  if (message.type === "stdin_mode") {
+    state.stdinMode = message.mode === "shared" ? "shared" : "message";
+    return;
+  }
   if (message.type === "stdin_request") {
     state.stdinWaiting = true;
+    state.lastStdinRequestMode = message.mode || null;
+    if (message.mode === "shared" || message.mode === "message") {
+      state.stdinMode = message.mode;
+    }
     if (state.stdinQueue.length) {
       deliverInput();
     }
@@ -2088,7 +2189,10 @@ function resetTurtleRenderer(width, height, bg, meta = {}) {
     y: 0,
     heading: 0,
     visible: true,
-    penSize: 2
+    penSize: 2,
+    shape: "classic",
+    stretchWid: 1,
+    stretchLen: 1
   };
   drawTurtleFrame(renderer);
 }
@@ -2250,6 +2354,19 @@ function applyTurtleEvent(renderer, event) {
     if (event.visible !== undefined) {
       renderer.turtle.visible = event.visible;
     }
+    if (event.shape) {
+      renderer.turtle.shape = String(event.shape);
+    }
+    if (Array.isArray(event.stretch)) {
+      const wid = Number(event.stretch[0]);
+      const len = Number(event.stretch[1]);
+      if (Number.isFinite(wid)) {
+        renderer.turtle.stretchWid = wid;
+      }
+      if (Number.isFinite(len)) {
+        renderer.turtle.stretchLen = len;
+      }
+    }
     drawTurtleFrame(renderer);
     return;
   }
@@ -2368,22 +2485,58 @@ function drawTurtleIcon(renderer) {
     return;
   }
   const pos = toCanvasCoords(renderer, renderer.turtle.x, renderer.turtle.y);
-  const size = 10 + Math.min(6, renderer.turtle.penSize || 2);
+  const baseSize = 10 + Math.min(6, renderer.turtle.penSize || 2);
+  const stretchLen = Number.isFinite(renderer.turtle.stretchLen) ? renderer.turtle.stretchLen : 1;
+  const stretchWid = Number.isFinite(renderer.turtle.stretchWid) ? renderer.turtle.stretchWid : 1;
+  const sizeX = baseSize * Math.max(0.2, stretchLen);
+  const sizeY = baseSize * Math.max(0.2, stretchWid);
   const heading = displayHeading(renderer, renderer.turtle.heading);
   const ctx = renderer.ctx;
+  const shape = String(renderer.turtle.shape || "classic").toLowerCase();
   ctx.save();
   ctx.translate(pos.x, pos.y);
   ctx.rotate((-heading * Math.PI) / 180);
-  ctx.beginPath();
-  ctx.moveTo(size, 0);
-  ctx.lineTo(-size * 0.6, size * 0.5);
-  ctx.lineTo(-size * 0.6, -size * 0.5);
-  ctx.closePath();
   ctx.fillStyle = "#20b46a";
   ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
   ctx.lineWidth = 1;
-  ctx.fill();
-  ctx.stroke();
+  if (shape === "circle") {
+    ctx.beginPath();
+    if (typeof ctx.ellipse === "function") {
+      ctx.ellipse(0, 0, sizeX, sizeY, 0, 0, Math.PI * 2);
+    } else {
+      ctx.arc(0, 0, Math.max(sizeX, sizeY), 0, Math.PI * 2);
+    }
+    ctx.fill();
+    ctx.stroke();
+  } else if (shape === "square") {
+    ctx.beginPath();
+    ctx.rect(-sizeX, -sizeY, sizeX * 2, sizeY * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else if (shape === "turtle") {
+    const bodyX = sizeX * 1.1;
+    const bodyY = sizeY * 0.8;
+    ctx.beginPath();
+    if (typeof ctx.ellipse === "function") {
+      ctx.ellipse(0, 0, bodyX, bodyY, 0, 0, Math.PI * 2);
+    } else {
+      ctx.arc(0, 0, Math.max(bodyX, bodyY), 0, Math.PI * 2);
+    }
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(bodyX * 0.9, 0, Math.max(2, Math.min(bodyX, bodyY) * 0.35), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(sizeX, 0);
+    ctx.lineTo(-sizeX * 0.6, sizeY * 0.6);
+    ctx.lineTo(-sizeX * 0.6, -sizeY * 0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
