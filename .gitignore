@@ -1,0 +1,12 @@
+# Ignore spec file
+/ТЗ фронтенд only.md
+
+node_modules/
+playwright-report/
+test-results/
+
+# Test tooling
+tests/
+playwright.config.cjs
+package.json
+package-lock.json
