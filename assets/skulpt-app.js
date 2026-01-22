@@ -2453,11 +2453,9 @@ function skulptInput(prompt) {
   }
   state.stdinWaiting = true;
   enableConsoleInput(true);
-  return Sk.misceval.promiseToSuspension(
-    new Promise((resolve) => {
-      state.stdinResolver = resolve;
-    })
-  );
+  return new Promise((resolve) => {
+    state.stdinResolver = resolve;
+  });
 }
 
 function formatSkulptError(error) {
