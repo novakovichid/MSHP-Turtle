@@ -1,7 +1,7 @@
 # User Guide
 
 ## Overview
-MSHP-Turtle is a static, browser-only Python IDE. It runs CPython via Pyodide in a
+MSHP-IDE is a static, browser-only Python IDE. It runs CPython via Pyodide in a
 Web Worker and provides a file editor, console input/output, and a turtle canvas.
 All data stays in the browser.
 

@@ -1,4 +1,4 @@
-import { gzipSync, gunzipSync } from "./fflate.esm.js";
+import { gzipSync, gunzipSync } from "./skulpt-fflate.esm.js";
 
 const CONFIG = {
   RUN_TIMEOUT_MS: 10000,
@@ -87,6 +87,12 @@ const state = {
   },
   worker: null,
   workerReady: false,
+  skulptReady: false,
+  stdinResolver: null,
+  runToken: 0,
+  stopRequested: false,
+  skulptFiles: null,
+  skulptAssets: null,
   runtimeBlocked: false,
   stdinQueue: [],
   stdinWaiting: false,
@@ -217,6 +223,702 @@ const turtleInput = {
   dragTarget: "screen"
 };
 
+const skulptTurtleRuntime = createSkulptTurtleRuntime();
+if (typeof window !== "undefined") {
+  window.__mshpSkulptTurtle = skulptTurtleRuntime;
+}
+
+function createSkulptTurtleRuntime() {
+  const screen = {
+    bg: "#f5f9ff",
+    colorMode: 1.0,
+    mode: "standard",
+    world: null,
+    tracer: 1,
+    delay: 10,
+    listen: false,
+    pending: []
+  };
+  const turtle = {
+    x: 0,
+    y: 0,
+    heading: 0,
+    penDown: true,
+    penColor: "black",
+    fillColor: "black",
+    penSize: 1,
+    fillActive: false,
+    fillPath: [],
+    speed: 3,
+    visible: true,
+    shape: "classic",
+    stretchWid: 1,
+    stretchLen: 1
+  };
+  const handlers = {
+    keyPress: new Map(),
+    keyRelease: new Map(),
+    keyAnyPress: [],
+    keyAnyRelease: [],
+    mouseClick: new Map(),
+    mouseRelease: new Map(),
+    mouseDrag: new Map(),
+    turtleClick: new Map(),
+    turtleRelease: new Map(),
+    turtleDrag: new Map()
+  };
+
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+  function toPlain(value) {
+    try {
+      if (typeof Sk !== 'undefined' && Sk.ffi) {
+        return Sk.ffi.remapToJs(value);
+      }
+    } catch (error) {
+      // ignore
+    }
+    return value;
+  }
+
+  function emit(event) {
+    if (screen.tracer === 0 && event.type !== "init" && event.type !== "listen") {
+      screen.pending.push(event);
+      return;
+    }
+    renderTurtleEvent(event);
+  }
+
+  function emitInit() {
+    emit({
+      type: "init",
+      w: TURTLE_CANVAS_WIDTH,
+      h: TURTLE_CANVAS_HEIGHT,
+      bg: screen.bg,
+      mode: screen.mode,
+      world: screen.world
+    });
+  }
+
+  function emitTurtle() {
+    emit({
+      type: "turtle",
+      x: turtle.x,
+      y: turtle.y,
+      heading: turtle.heading,
+      visible: turtle.visible,
+      speed: turtle.speed,
+      mode: screen.mode,
+      shape: turtle.shape,
+      stretch: [turtle.stretchWid, turtle.stretchLen]
+    });
+  }
+
+  function headingToRadians() {
+    let angle = turtle.heading;
+    if (screen.mode === "logo") {
+      angle = 90 - angle;
+    }
+    return (angle * Math.PI) / 180;
+  }
+
+  function angleToHeading(angle) {
+    if (screen.mode === "logo") {
+      return (90 - angle) % 360;
+    }
+    return ((angle % 360) + 360) % 360;
+  }
+
+  function move(dist) {
+    const radians = headingToRadians();
+    const x1 = turtle.x;
+    const y1 = turtle.y;
+    const nx = x1 + Math.cos(radians) * dist;
+    const ny = y1 + Math.sin(radians) * dist;
+    if (turtle.fillActive) {
+      turtle.fillPath.push([nx, ny]);
+    }
+    turtle.x = nx;
+    turtle.y = ny;
+    emit({
+      type: "move",
+      x1,
+      y1,
+      x2: nx,
+      y2: ny,
+      pen: turtle.penDown,
+      color: turtle.penColor,
+      width: turtle.penSize,
+      heading: turtle.heading,
+      visible: turtle.visible,
+      speed: turtle.speed,
+      mode: screen.mode
+    });
+  }
+
+  function turnLeft(angle) {
+    if (screen.mode === "logo") {
+      turtle.heading = (turtle.heading - angle) % 360;
+    } else {
+      turtle.heading = (turtle.heading + angle) % 360;
+    }
+    emit({
+      type: "turn",
+      x: turtle.x,
+      y: turtle.y,
+      heading: turtle.heading,
+      visible: turtle.visible,
+      speed: turtle.speed,
+      mode: screen.mode
+    });
+  }
+
+  function turnRight(angle) {
+    if (screen.mode === "logo") {
+      turtle.heading = (turtle.heading + angle) % 360;
+    } else {
+      turtle.heading = (turtle.heading - angle) % 360;
+    }
+    emit({
+      type: "turn",
+      x: turtle.x,
+      y: turtle.y,
+      heading: turtle.heading,
+      visible: turtle.visible,
+      speed: turtle.speed,
+      mode: screen.mode
+    });
+  }
+
+  function parsePosition(x, y) {
+    if (Array.isArray(x) && x.length >= 2) {
+      return [Number(x[0]), Number(x[1])];
+    }
+    return [Number(x), Number(y)];
+  }
+
+  function colorToCss(value) {
+    if (Array.isArray(value) && value.length >= 3) {
+      let r = value[0];
+      let g = value[1];
+      let b = value[2];
+      if (screen.colorMode === 1.0) {
+        r = Math.round(clamp(r, 0, 1) * 255);
+        g = Math.round(clamp(g, 0, 1) * 255);
+        b = Math.round(clamp(b, 0, 1) * 255);
+      }
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+    return String(value);
+  }
+
+  function setColor(argList) {
+    if (argList.length === 1) {
+      const css = colorToCss(argList[0]);
+      turtle.penColor = css;
+      turtle.fillColor = css;
+      return;
+    }
+    if (argList.length >= 3) {
+      const css = colorToCss(argList);
+      turtle.penColor = css;
+      turtle.fillColor = css;
+      return;
+    }
+    if (argList.length >= 2) {
+      turtle.penColor = colorToCss(argList[0]);
+      turtle.fillColor = colorToCss(argList[1]);
+    }
+  }
+
+  function beginFill() {
+    turtle.fillActive = true;
+    turtle.fillPath = [[turtle.x, turtle.y]];
+    emit({ type: "fill_start" });
+  }
+
+  function endFill() {
+    if (!turtle.fillActive) {
+      return;
+    }
+    turtle.fillActive = false;
+    emit({ type: "fill_end" });
+    if (turtle.fillPath.length > 1) {
+      emit({
+        type: "fill",
+        points: turtle.fillPath,
+        color: turtle.fillColor
+      });
+    }
+    turtle.fillPath = [];
+  }
+
+  function resetState() {
+    turtle.x = 0;
+    turtle.y = 0;
+    turtle.heading = 0;
+    turtle.penDown = true;
+    turtle.penColor = "black";
+    turtle.fillColor = "black";
+    turtle.penSize = 1;
+    turtle.fillActive = false;
+    turtle.fillPath = [];
+    turtle.speed = 3;
+    turtle.visible = true;
+    turtle.shape = "classic";
+    turtle.stretchWid = 1;
+    turtle.stretchLen = 1;
+  }
+
+  function resetAll() {
+    screen.world = null;
+    emitInit();
+    resetState();
+    emitTurtle();
+  }
+
+  function callHandlers(list, args) {
+    list.forEach((handler) => {
+      try {
+        const pyArgs = args.map((arg) => Sk.ffi.remapToPy(arg));
+        Sk.misceval.callsim(handler, ...pyArgs);
+      } catch (error) {
+        // ignore handler errors
+      }
+    });
+  }
+
+  function callHandlerMap(map, key, args) {
+    const handlersForKey = map.get(key);
+    if (!handlersForKey) {
+      return;
+    }
+    callHandlers(handlersForKey, args);
+  }
+
+  function setHandler(map, key, fn, add) {
+    if (!fn) {
+      map.delete(key);
+      return;
+    }
+    const list = map.get(key) || [];
+    if (!add) {
+      list.length = 0;
+    }
+    list.push(fn);
+    map.set(key, list);
+  }
+
+  function setAnyHandler(list, fn, add) {
+    if (!fn) {
+      list.length = 0;
+      return;
+    }
+    if (!add) {
+      list.length = 0;
+    }
+    list.push(fn);
+  }
+
+  function handleInputEvent(event) {
+    if (!screen.listen) {
+      return;
+    }
+    if (event.type === "key") {
+      if (event.kind === "press") {
+        callHandlers(handlers.keyAnyPress, []);
+        callHandlerMap(handlers.keyPress, event.key, []);
+      } else if (event.kind === "release") {
+        callHandlers(handlers.keyAnyRelease, []);
+        callHandlerMap(handlers.keyRelease, event.key, []);
+      }
+      return;
+    }
+    if (event.type === "pointer") {
+      const args = [event.x, event.y];
+      if (event.kind === "press") {
+        if (event.target === "turtle") {
+          callHandlerMap(handlers.turtleClick, event.btn, args);
+        } else {
+          callHandlerMap(handlers.mouseClick, event.btn, args);
+        }
+      }
+      if (event.kind === "drag") {
+        if (event.target === "turtle") {
+          callHandlerMap(handlers.turtleDrag, event.btn, args);
+        } else {
+          callHandlerMap(handlers.mouseDrag, event.btn, args);
+        }
+      }
+      if (event.kind === "release") {
+        if (event.target === "turtle") {
+          callHandlerMap(handlers.turtleRelease, event.btn, args);
+        } else {
+          callHandlerMap(handlers.mouseRelease, event.btn, args);
+        }
+      }
+    }
+  }
+
+  resetAll();
+
+  return {
+    reset: resetAll,
+    clear() {
+      emit({ type: "clear", bg: screen.bg });
+    },
+    forward(dist) {
+      move(Number(dist) || 0);
+    },
+    fd(dist) {
+      move(Number(dist) || 0);
+    },
+    back(dist) {
+      move(-(Number(dist) || 0));
+    },
+    backward(dist) {
+      move(-(Number(dist) || 0));
+    },
+    bk(dist) {
+      move(-(Number(dist) || 0));
+    },
+    left(angle) {
+      turnLeft(Number(angle) || 0);
+    },
+    lt(angle) {
+      turnLeft(Number(angle) || 0);
+    },
+    right(angle) {
+      turnRight(Number(angle) || 0);
+    },
+    rt(angle) {
+      turnRight(Number(angle) || 0);
+    },
+    goto(x, y) {
+      const [nx, ny] = parsePosition(x, y);
+      const x1 = turtle.x;
+      const y1 = turtle.y;
+      if (turtle.fillActive) {
+        turtle.fillPath.push([nx, ny]);
+      }
+      turtle.x = nx;
+      turtle.y = ny;
+      emit({
+        type: "move",
+        x1,
+        y1,
+        x2: nx,
+        y2: ny,
+        pen: turtle.penDown,
+        color: turtle.penColor,
+        width: turtle.penSize,
+        heading: turtle.heading,
+        visible: turtle.visible,
+        speed: turtle.speed,
+        mode: screen.mode
+      });
+    },
+    setpos(x, y) {
+      this.goto(x, y);
+    },
+    setposition(x, y) {
+      this.goto(x, y);
+    },
+    setx(x) {
+      this.goto(x, turtle.y);
+    },
+    sety(y) {
+      this.goto(turtle.x, y);
+    },
+    position() {
+      return [turtle.x, turtle.y];
+    },
+    pos() {
+      return [turtle.x, turtle.y];
+    },
+    xcor() {
+      return turtle.x;
+    },
+    ycor() {
+      return turtle.y;
+    },
+    towards(x, y) {
+      const [tx, ty] = parsePosition(x, y);
+      const dx = tx - turtle.x;
+      const dy = ty - turtle.y;
+      if (dx === 0 && dy === 0) {
+        return turtle.heading;
+      }
+      const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+      return angleToHeading(angle);
+    },
+    distance(x, y) {
+      const [tx, ty] = parsePosition(x, y);
+      return Math.hypot(tx - turtle.x, ty - turtle.y);
+    },
+    penup() {
+      turtle.penDown = false;
+    },
+    pu() {
+      turtle.penDown = false;
+    },
+    pendown() {
+      turtle.penDown = true;
+    },
+    pd() {
+      turtle.penDown = true;
+    },
+    isdown() {
+      return turtle.penDown;
+    },
+    pen(penState) {
+      if (typeof penState === "boolean") {
+        turtle.penDown = penState;
+      }
+      return turtle.penDown;
+    },
+    color(...args) {
+      setColor(args);
+    },
+    pencolor(...args) {
+      if (args.length === 0) {
+        return turtle.penColor;
+      }
+      turtle.penColor = colorToCss(args.length === 1 ? args[0] : args);
+    },
+    fillcolor(...args) {
+      if (args.length === 0) {
+        return turtle.fillColor;
+      }
+      turtle.fillColor = colorToCss(args.length === 1 ? args[0] : args);
+    },
+    pensize(value) {
+      if (value === undefined) {
+        return turtle.penSize;
+      }
+      turtle.penSize = Math.max(1, Number(value) || 1);
+    },
+    width(value) {
+      return this.pensize(value);
+    },
+    dot(size = 4, color = null) {
+      emit({
+        type: "dot",
+        x: turtle.x,
+        y: turtle.y,
+        size: Number(size) || 4,
+        color: color ? colorToCss(color) : turtle.penColor
+      });
+    },
+    write(text, moveArg = false, align = "center", font = "16px Rubik") {
+      emit({
+        type: "text",
+        x: turtle.x,
+        y: turtle.y,
+        text: String(text ?? ""),
+        align: align,
+        font: font,
+        color: turtle.penColor
+      });
+      if (moveArg) {
+        move(10);
+      }
+    },
+    begin_fill() {
+      beginFill();
+    },
+    end_fill() {
+      endFill();
+    },
+    filling() {
+      return turtle.fillActive;
+    },
+    home() {
+      this.goto(0, 0);
+      turtle.heading = 0;
+      emitTurtle();
+    },
+    heading() {
+      return turtle.heading;
+    },
+    setheading(angle) {
+      turtle.heading = angleToHeading(Number(angle) || 0);
+      emitTurtle();
+    },
+    seth(angle) {
+      this.setheading(angle);
+    },
+    circle(radius, extent = 360, steps = null) {
+      const r = Number(radius) || 0;
+      if (!r) {
+        return;
+      }
+      const total = Number(extent) || 0;
+      const count = steps ? Math.max(1, Number(steps)) : Math.max(1, Math.round(Math.abs(total) / 10));
+      const stepAngle = total / count;
+      const stepLen = (2 * Math.PI * Math.abs(r) * Math.abs(stepAngle)) / 360;
+      for (let i = 0; i < count; i += 1) {
+        if (r >= 0) {
+          turnLeft(stepAngle);
+        } else {
+          turnRight(stepAngle);
+        }
+        move(stepLen * (r >= 0 ? 1 : -1));
+      }
+    },
+    speed(value) {
+      if (value === undefined) {
+        return turtle.speed;
+      }
+      turtle.speed = Math.max(0, Math.min(10, Number(value) || 3));
+      emitTurtle();
+    },
+    hideturtle() {
+      turtle.visible = false;
+      emitTurtle();
+    },
+    ht() {
+      turtle.visible = false;
+      emitTurtle();
+    },
+    showturtle() {
+      turtle.visible = true;
+      emitTurtle();
+    },
+    st() {
+      turtle.visible = true;
+      emitTurtle();
+    },
+    isvisible() {
+      return turtle.visible;
+    },
+    shape(name) {
+      if (name === undefined) {
+        return turtle.shape;
+      }
+      turtle.shape = String(name);
+      emitTurtle();
+    },
+    shapesize(stretchWid = 1, stretchLen = 1) {
+      turtle.stretchWid = Number(stretchWid) || 1;
+      turtle.stretchLen = Number(stretchLen) || 1;
+      emitTurtle();
+    },
+    turtlesize(stretchWid = 1, stretchLen = 1) {
+      turtle.stretchWid = Number(stretchWid) || 1;
+      turtle.stretchLen = Number(stretchLen) || 1;
+      emitTurtle();
+    },
+    bgcolor(color) {
+      if (color === undefined) {
+        return screen.bg;
+      }
+      screen.bg = colorToCss(color);
+      emit({ type: "clear", bg: screen.bg });
+    },
+    bgpic(picname) {
+      return picname || null;
+    },
+    tracer(n = null, delay = null) {
+      if (n !== null && n !== undefined) {
+        screen.tracer = Number(n) || 0;
+      }
+      if (delay !== null && delay !== undefined) {
+        screen.delay = Number(delay) || 0;
+      }
+      if (screen.tracer !== 0) {
+        this.update();
+      }
+    },
+    update() {
+      if (!screen.pending.length) {
+        return;
+      }
+      const pending = screen.pending.slice();
+      screen.pending = [];
+      pending.forEach((evt) => renderTurtleEvent(evt));
+    },
+    colormode(value) {
+      if (value === undefined) {
+        return screen.colorMode;
+      }
+      screen.colorMode = value;
+      return screen.colorMode;
+    },
+    mode(value) {
+      if (value === undefined) {
+        return screen.mode;
+      }
+      const next = String(value).toLowerCase();
+      if (!["standard", "logo", "world"].includes(next)) {
+        return screen.mode;
+      }
+      screen.mode = next;
+      if (next !== "world") {
+        screen.world = null;
+      }
+      emitInit();
+      return screen.mode;
+    },
+    screensize() {
+      return [TURTLE_CANVAS_WIDTH, TURTLE_CANVAS_HEIGHT];
+    },
+    window_width() {
+      return TURTLE_CANVAS_WIDTH;
+    },
+    window_height() {
+      return TURTLE_CANVAS_HEIGHT;
+    },
+    setup() {
+      emitInit();
+    },
+    listen() {
+      screen.listen = true;
+      turtleInput.listen = true;
+      emit({ type: "listen", enabled: true });
+    },
+    onkey(fun, key) {
+      const normalized = key === null || key === undefined ? null : String(toPlain(key));
+      setHandler(handlers.keyRelease, normalized, fun, false);
+    },
+    onkeypress(fun, key = null) {
+      if (key === null || key === undefined) {
+        setAnyHandler(handlers.keyAnyPress, fun, false);
+      } else {
+        const normalized = String(toPlain(key));
+        setHandler(handlers.keyPress, normalized, fun, false);
+      }
+    },
+    onkeyrelease(fun, key = null) {
+      if (key === null || key === undefined) {
+        setAnyHandler(handlers.keyAnyRelease, fun, false);
+      } else {
+        const normalized = String(toPlain(key));
+        setHandler(handlers.keyRelease, normalized, fun, false);
+      }
+    },
+    onclick(fun, btn = 1, add = null) {
+      const normalized = Number(toPlain(btn)) || 1;
+      setHandler(handlers.mouseClick, normalized, fun, add);
+    },
+    onscreenclick(fun, btn = 1, add = null) {
+      const normalized = Number(toPlain(btn)) || 1;
+      setHandler(handlers.mouseClick, normalized, fun, add);
+    },
+    ondrag(fun, btn = 1, add = null) {
+      const normalized = Number(toPlain(btn)) || 1;
+      setHandler(handlers.turtleDrag, normalized, fun, add);
+    },
+    onrelease(fun, btn = 1, add = null) {
+      const normalized = Number(toPlain(btn)) || 1;
+      setHandler(handlers.turtleRelease, normalized, fun, add);
+    },
+    handleInputEvent,
+    _screen: screen,
+    _turtle: turtle
+  };
+}
+
 function createUuid() {
   if (typeof crypto !== "undefined") {
     if (typeof crypto.randomUUID === "function") {
@@ -311,22 +1013,14 @@ init();
 
 async function init() {
   showGuard(true);
-  if (!("Worker" in window) || !("WebAssembly" in window)) {
-    setGuardMessage("Unsupported browser", "This app needs WebAssembly and Web Workers.");
-    return;
-  }
   bindUi();
-  const swEnabled = await registerServiceWorker();
-  const compat = await ensureRuntimeCompatibility(swEnabled);
-  if (compat.reloading) {
-    return;
-  }
+  await registerServiceWorker();
   state.db = await openDb();
   if (!state.db) {
     showToast("Storage fallback: changes will not persist in this browser.");
   }
   loadSettings();
-  initWorker();
+  initSkulpt();
   await router();
   window.addEventListener("hashchange", router);
 }
@@ -437,16 +1131,7 @@ function bindUi() {
 }
 
 async function registerServiceWorker() {
-  if (!("serviceWorker" in navigator)) {
-    return false;
-  }
-  try {
-    await navigator.serviceWorker.register("./sw.js");
-    return true;
-  } catch (error) {
-    console.warn("Service worker failed", error);
-    return false;
-  }
+  return false;
 }
 
 function showGuard(show) {
@@ -1836,37 +2521,54 @@ function submitConsoleInput() {
   }
   els.consoleInput.value = "";
   appendConsole(`${value}\n`, false);
-  if (state.worker && state.workerReady) {
-    if (canUseSharedStdin()) {
-      writeSharedStdin(value);
-    }
-    state.worker.postMessage({ type: "stdin_response", value });
+  if (state.stdinResolver) {
+    const resolver = state.stdinResolver;
+    state.stdinResolver = null;
     state.stdinWaiting = false;
+    resolver(value);
     return;
   }
   state.stdinQueue.push(value);
-  if (state.stdinWaiting) {
-    deliverInput();
-  }
 }
 
 function deliverInput() {
-  if (!state.stdinQueue.length) {
-    return;
-  }
-  if (!state.worker) {
-    state.stdinQueue = [];
-    state.stdinWaiting = false;
+  if (!state.stdinQueue.length || !state.stdinResolver) {
     return;
   }
   const value = state.stdinQueue.shift();
-  const usedShared = canUseSharedStdin() && writeSharedStdin(value);
-  if (usedShared && state.stdinMode === "shared") {
-    state.stdinWaiting = false;
-    return;
-  }
-  state.worker.postMessage({ type: "stdin_response", value });
+  const resolver = state.stdinResolver;
+  state.stdinResolver = null;
   state.stdinWaiting = false;
+  resolver(value);
+}
+
+function skulptInput(prompt) {
+  if (prompt) {
+    appendConsole(String(prompt), false);
+  }
+  if (state.stdinQueue.length) {
+    return state.stdinQueue.shift();
+  }
+  state.stdinWaiting = true;
+  enableConsoleInput(true);
+  return Sk.misceval.promiseToSuspension(
+    new Promise((resolve) => {
+      state.stdinResolver = resolve;
+    })
+  );
+}
+
+function formatSkulptError(error) {
+  if (!error) {
+    return "Unknown error";
+  }
+  if (typeof Sk !== "undefined" && error instanceof Sk.builtin.BaseException) {
+    return error.toString();
+  }
+  if (error.stack) {
+    return error.stack;
+  }
+  return String(error);
 }
 
 function resetSharedStdin() {
@@ -1913,121 +2615,248 @@ function writeSharedStdin(value) {
   return true;
 }
 
-function initWorker() {
-  spawnWorker();
-}
-
-function spawnWorker() {
-  if (state.worker) {
-    state.worker.terminate();
-  }
-  state.worker = null;
-  state.workerReady = false;
-  resetSharedStdin();
-  showGuard(true);
-
-  const generation = workerGeneration + 1;
-  workerGeneration = generation;
-  const workerUrl = new URL("assets/worker.js", location.href).toString();
-
-  if (typeof fetch !== "function") {
-    const fallbackUrl = `${workerUrl}?v=${Date.now()}`;
-    const worker = new Worker(fallbackUrl);
-    registerWorker(worker);
+function initSkulpt() {
+  if (typeof window === "undefined" || typeof window.Sk === "undefined") {
+    state.runtimeBlocked = true;
+    setGuardMessage("Skulpt не загружен", "Проверьте подключение библиотек Skulpt.");
     return;
   }
-
-  fetch(workerUrl, { cache: "no-store" })
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(`Worker fetch failed: ${response.status}`);
-      }
-      return response.text();
-    })
-    .then((code) => {
-      if (generation !== workerGeneration) {
-        return;
-      }
-      const blob = new Blob([code], { type: "text/javascript" });
-      const blobUrl = URL.createObjectURL(blob);
-      const worker = new Worker(blobUrl);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-      registerWorker(worker);
-    })
-    .catch(() => {
-      if (generation !== workerGeneration) {
-        return;
-      }
-      const fallbackUrl = `${workerUrl}?v=${Date.now()}`;
-      const worker = new Worker(fallbackUrl);
-      registerWorker(worker);
-    });
+  state.workerReady = true;
+  state.skulptReady = true;
+  updateRunStatus("idle");
+  showGuard(false);
 }
 
-function registerWorker(worker) {
-  state.worker = worker;
-  state.workerReady = false;
-  worker.addEventListener("message", (event) => handleWorkerMessage(event.data));
-  const stdinShared = setupSharedStdin();
-  worker.postMessage({
-    type: "init",
-    indexURL: new URL("pyodide-0.29.1/pyodide/", location.href).toString(),
-    stdinShared
+function configureSkulptRuntime(files, assets) {
+  state.skulptFiles = buildSkulptFileMap(files);
+  state.skulptAssets = buildSkulptAssetMap(assets);
+  ensureSkulptTurtleModule();
+  if (skulptTurtleRuntime && typeof skulptTurtleRuntime.reset === "function") {
+    skulptTurtleRuntime.reset();
+  }
+  Sk.inBrowser = false;
+  Sk.configure({
+    output: (text) => appendConsole(text, false),
+    read: skulptRead,
+    inputfun: skulptInput,
+    inputfunTakesPrompt: true,
+    execLimit: CONFIG.RUN_TIMEOUT_MS,
+    yieldLimit: CONFIG.RUN_TIMEOUT_MS,
+    syspath: ["/project"]
   });
+  Sk.execLimit = CONFIG.RUN_TIMEOUT_MS;
+  Sk.execStart = Date.now();
 }
 
-function handleWorkerMessage(message) {
-  if (message.type === "ready") {
-    state.workerReady = true;
-    updateRunStatus("idle");
-    showGuard(false);
+function skulptRead(path) {
+  const files = state.skulptFiles;
+  const assets = state.skulptAssets;
+  const normalized = normalizeSkulptPath(path);
+  if (files && files.has(normalized)) {
+    return files.get(normalized);
+  }
+  if (assets && assets.has(normalized)) {
+    return assets.get(normalized);
+  }
+  if (Sk.builtinFiles && Sk.builtinFiles["files"] && Sk.builtinFiles["files"][path] !== undefined) {
+    return Sk.builtinFiles["files"][path];
+  }
+  if (Sk.builtinFiles && Sk.builtinFiles["files"] && Sk.builtinFiles["files"][normalized] !== undefined) {
+    return Sk.builtinFiles["files"][normalized];
+  }
+  throw new Sk.builtin.IOError(`File not found: '${path}'`);
+}
+
+function normalizeSkulptPath(path) {
+  if (!path) {
+    return "";
+  }
+  if (path.startsWith("/project/")) {
+    return path;
+  }
+  if (path.startsWith("./")) {
+    return `/project/${path.slice(2)}`;
+  }
+  if (path.startsWith("/")) {
+    return path;
+  }
+  return `/project/${path}`;
+}
+
+function buildSkulptFileMap(files) {
+  const map = new Map();
+  files.forEach((file) => {
+    const name = String(file.name || "");
+    map.set(`/project/${name}`, String(file.content ?? ""));
+  });
+  return map;
+}
+
+function buildSkulptAssetMap(assets) {
+  const map = new Map();
+  assets.forEach((asset) => {
+    const name = String(asset.name || "");
+    const data = asset.data instanceof Uint8Array ? asset.data : new Uint8Array(asset.data || []);
+    map.set(`/project/${name}`, decodeAssetBytes(data));
+    map.set(name, decodeAssetBytes(data));
+  });
+  return map;
+}
+
+function decodeAssetBytes(bytes) {
+  if (!bytes || !bytes.length) {
+    return "";
+  }
+  if (typeof TextDecoder !== "undefined") {
+    try {
+      return new TextDecoder("utf-8").decode(bytes);
+    } catch (error) {
+      return bytesToBinaryString(bytes);
+    }
+  }
+  return bytesToBinaryString(bytes);
+}
+
+function bytesToBinaryString(bytes) {
+  let result = "";
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    result += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return result;
+}
+
+function ensureSkulptTurtleModule() {
+  if (typeof Sk === "undefined") {
     return;
   }
-  if (message.type === "stdout") {
-    appendConsole(message.data, false);
+  if (!Sk.builtinFiles) {
+    Sk.builtinFiles = { files: {} };
+  }
+  if (!Sk.builtinFiles["files"]) {
+    Sk.builtinFiles["files"] = {};
+  }
+  if (Sk.builtinFiles["files"]["src/lib/turtle.js"]) {
     return;
   }
-  if (message.type === "stderr") {
-    appendConsole(message.data, true);
-    return;
+  Sk.builtinFiles["files"]["src/lib/turtle.js"] = `
+var $builtinmodule = function(name) {
+  var mod = {};
+  mod.__name__ = new Sk.builtin.str('turtle');
+  var runtime = (typeof window !== 'undefined' && window.__mshpSkulptTurtle) ? window.__mshpSkulptTurtle : null;
+
+  function toJs(value) {
+    return Sk.ffi.remapToJs(value);
   }
-  if (message.type === "status") {
-    updateRunStatus(message.state);
-    if (message.state === "running") {
-      els.stopBtn.disabled = false;
-      enableConsoleInput(true);
-    } else {
-      els.stopBtn.disabled = true;
-      enableConsoleInput(false);
-      if (state.runTimeout) {
-        clearTimeout(state.runTimeout);
-        state.runTimeout = null;
+
+  function wrapVoid(method) {
+    return new Sk.builtin.func(function() {
+      var args = Array.prototype.slice.call(arguments).map(toJs);
+      if (runtime && runtime[method]) {
+        runtime[method].apply(runtime, args);
       }
-      if (state.hardStopTimer) {
-        clearTimeout(state.hardStopTimer);
-        state.hardStopTimer = null;
+      return Sk.builtin.none.none$;
+    });
+  }
+
+  function wrapValue(method) {
+    return new Sk.builtin.func(function() {
+      var args = Array.prototype.slice.call(arguments).map(toJs);
+      if (runtime && runtime[method]) {
+        return Sk.ffi.remapToPy(runtime[method].apply(runtime, args));
       }
-    }
-    return;
+      return Sk.builtin.none.none$;
+    });
   }
-  if (message.type === "stdin_mode") {
-    state.stdinMode = message.mode === "shared" ? "shared" : "message";
-    return;
+
+  function wrapCallback(method) {
+    return new Sk.builtin.func(function() {
+      if (!runtime || !runtime[method]) {
+        return Sk.builtin.none.none$;
+      }
+      var args = Array.prototype.slice.call(arguments);
+      runtime[method].apply(runtime, args);
+      return Sk.builtin.none.none$;
+    });
   }
-  if (message.type === "stdin_request") {
-    state.stdinWaiting = true;
-    state.lastStdinRequestMode = message.mode || null;
-    if (message.mode === "shared" || message.mode === "message") {
-      state.stdinMode = message.mode;
-    }
-    if (state.stdinQueue.length) {
-      deliverInput();
-    }
-    return;
-  }
-  if (message.type === "turtle") {
-    renderTurtleEvent(message.event);
-  }
+
+  mod.forward = wrapVoid('forward');
+  mod.fd = wrapVoid('fd');
+  mod.back = wrapVoid('back');
+  mod.backward = wrapVoid('backward');
+  mod.bk = wrapVoid('bk');
+  mod.left = wrapVoid('left');
+  mod.lt = wrapVoid('lt');
+  mod.right = wrapVoid('right');
+  mod.rt = wrapVoid('rt');
+  mod.goto = wrapVoid('goto');
+  mod.setpos = wrapVoid('setpos');
+  mod.setposition = wrapVoid('setposition');
+  mod.setx = wrapVoid('setx');
+  mod.sety = wrapVoid('sety');
+  mod.position = wrapValue('position');
+  mod.pos = wrapValue('pos');
+  mod.xcor = wrapValue('xcor');
+  mod.ycor = wrapValue('ycor');
+  mod.towards = wrapValue('towards');
+  mod.distance = wrapValue('distance');
+  mod.penup = wrapVoid('penup');
+  mod.pu = wrapVoid('pu');
+  mod.pendown = wrapVoid('pendown');
+  mod.pd = wrapVoid('pd');
+  mod.isdown = wrapValue('isdown');
+  mod.pen = wrapValue('pen');
+  mod.color = wrapVoid('color');
+  mod.pencolor = wrapValue('pencolor');
+  mod.fillcolor = wrapValue('fillcolor');
+  mod.pensize = wrapValue('pensize');
+  mod.width = wrapValue('width');
+  mod.dot = wrapVoid('dot');
+  mod.write = wrapVoid('write');
+  mod.clear = wrapVoid('clear');
+  mod.reset = wrapVoid('reset');
+  mod.home = wrapVoid('home');
+  mod.heading = wrapValue('heading');
+  mod.setheading = wrapVoid('setheading');
+  mod.seth = wrapVoid('seth');
+  mod.circle = wrapVoid('circle');
+  mod.begin_fill = wrapVoid('begin_fill');
+  mod.end_fill = wrapVoid('end_fill');
+  mod.filling = wrapValue('filling');
+  mod.speed = wrapValue('speed');
+  mod.hideturtle = wrapVoid('hideturtle');
+  mod.ht = wrapVoid('ht');
+  mod.showturtle = wrapVoid('showturtle');
+  mod.st = wrapVoid('st');
+  mod.isvisible = wrapValue('isvisible');
+  mod.shape = wrapValue('shape');
+  mod.shapesize = wrapVoid('shapesize');
+  mod.turtlesize = wrapVoid('turtlesize');
+  mod.bgcolor = wrapValue('bgcolor');
+  mod.bgpic = wrapValue('bgpic');
+  mod.tracer = wrapVoid('tracer');
+  mod.update = wrapVoid('update');
+  mod.colormode = wrapValue('colormode');
+  mod.mode = wrapValue('mode');
+  mod.screensize = wrapValue('screensize');
+  mod.window_width = wrapValue('window_width');
+  mod.window_height = wrapValue('window_height');
+  mod.setup = wrapVoid('setup');
+  mod.listen = wrapVoid('listen');
+  mod.onkey = wrapCallback('onkey');
+  mod.onkeypress = wrapCallback('onkeypress');
+  mod.onkeyrelease = wrapCallback('onkeyrelease');
+  mod.onclick = wrapCallback('onclick');
+  mod.onscreenclick = wrapCallback('onscreenclick');
+  mod.ondrag = wrapCallback('ondrag');
+  mod.onrelease = wrapCallback('onrelease');
+
+  mod.Screen = new Sk.builtin.func(function() { return mod; });
+  mod.Turtle = new Sk.builtin.func(function() { return mod; });
+
+  return mod;
+};
+`;
 }
 
 
@@ -2054,7 +2883,7 @@ async function runActiveFile() {
   const entryName = getActiveTabName() || state.activeFile;
   const file = getFileByName(entryName);
   if (!file) {
-    showToast("Нет активного файла.");
+    showToast("?????? ?????????????????? ??????????.");
     return;
   }
   clearConsole();
@@ -2063,31 +2892,59 @@ async function runActiveFile() {
 
   state.stdinQueue = [];
   state.stdinWaiting = false;
+  state.stdinResolver = null;
+  state.stopRequested = false;
 
   const files = getCurrentFiles();
   const assets = state.mode === "project" ? await loadAssets() : [];
 
-  state.worker.postMessage({
-    type: "run",
-    entry: entryName,
-    files,
-    assets,
-    runTimeoutMs: CONFIG.RUN_TIMEOUT_MS
-  });
+  configureSkulptRuntime(files, assets);
+  const runToken = state.runToken + 1;
+  state.runToken = runToken;
+  els.stopBtn.disabled = false;
+  enableConsoleInput(true);
 
   if (state.runTimeout) {
     clearTimeout(state.runTimeout);
   }
   state.runTimeout = setTimeout(() => {
-    softInterrupt("Превышен лимит времени.");
-    state.hardStopTimer = setTimeout(() => {
-      hardStop();
-    }, 250);
-  }, CONFIG.RUN_TIMEOUT_MS);
+    softInterrupt("???????????????? ?????????? ??????????????.");
+    stopRun();
+  }, CONFIG.RUN_TIMEOUT_MS + 200);
+
+  try {
+    await Sk.misceval.asyncToPromise(() =>
+      Sk.importMainWithBody("__main__", false, String(file.content || ""), true)
+    );
+    if (state.runToken !== runToken) {
+      return;
+    }
+    updateRunStatus("done");
+  } catch (error) {
+    if (state.runToken !== runToken) {
+      return;
+    }
+    appendConsole(`\n${formatSkulptError(error)}\n`, true);
+    updateRunStatus("error");
+  } finally {
+    if (state.runToken === runToken) {
+      enableConsoleInput(false);
+      els.stopBtn.disabled = true;
+      state.stdinResolver = null;
+      state.stdinWaiting = false;
+      state.stdinQueue = [];
+    }
+    if (state.runTimeout) {
+      clearTimeout(state.runTimeout);
+      state.runTimeout = null;
+    }
+  }
 }
 
 function stopRun() {
-  softInterrupt("Остановлено пользователем.");
+  state.stopRequested = true;
+  state.runToken += 1;
+  softInterrupt("?????????????????????? ??????????????????????????.");
   hardStop();
 }
 
@@ -2096,9 +2953,6 @@ function softInterrupt(message) {
 }
 
 function hardStop() {
-  if (!state.worker) {
-    return;
-  }
   stopTurtleAnimation();
   if (state.runTimeout) {
     clearTimeout(state.runTimeout);
@@ -2108,12 +2962,13 @@ function hardStop() {
     clearTimeout(state.hardStopTimer);
     state.hardStopTimer = null;
   }
-  state.worker.terminate();
-  state.worker = null;
-  state.workerReady = false;
+  if (typeof Sk !== "undefined") {
+    Sk.execLimit = 1;
+    Sk.execStart = Date.now() - CONFIG.RUN_TIMEOUT_MS - 1;
+  }
   state.stdinQueue = [];
   state.stdinWaiting = false;
-  spawnWorker();
+  state.stdinResolver = null;
   updateRunStatus("stopped");
   enableConsoleInput(false);
   els.stopBtn.disabled = true;
@@ -2665,10 +3520,10 @@ function isPointOnTurtle(renderer, x, y) {
 }
 
 function sendTurtleInputEvent(event) {
-  if (!state.worker) {
+  if (!window.__mshpSkulptTurtle) {
     return;
   }
-  state.worker.postMessage({ type: "turtle_event", event });
+  window.__mshpSkulptTurtle.handleInputEvent(event);
 }
 
 function onTurtlePointerDown(event) {
@@ -3013,7 +3868,7 @@ async function openDb() {
   return new Promise((resolve) => {
     let request = null;
     try {
-      request = indexedDB.open("mshp-ide", 1);
+      request = indexedDB.open("mshp-ide-skulpt", 1);
     } catch (error) {
       console.warn("IndexedDB open failed", error);
       resolve(null);

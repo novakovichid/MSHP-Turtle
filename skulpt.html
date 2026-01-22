@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'" />
-  <title>MSHP-IDE - Web IDE Python</title>
-  <link rel="stylesheet" href="assets/styles.css" />
+  <title>MSHP-IDE (Skulpt) - Web IDE Python</title>
+  <link rel="stylesheet" href="assets/skulpt-styles.css" />
 </head>
 <body>
   <div class="ambient"></div>
@@ -29,7 +29,7 @@
         <p>Многофайловые проекты, ввод в консоли, turtle canvas и неизменяемые ссылки. Без сервера. Без аккаунтов.</p>
         <div class="hero-actions">
           <button id="new-project" class="btn primary">Новый проект</button>
-          <a class="btn ghost" href="skulpt.html#/">Skulpt ??????</a>
+          <a class="btn ghost" href="index.html#/">???????? ??????</a>
         </div>
       </div>
       <div class="hero-card">
@@ -55,7 +55,7 @@ print("Привет,", name)</pre>
       <a id="home-link" class="brand brand-link" href="#/" title="На главную">
         <div class="logo">MSHP</div>
         <div>
-          <div class="brand-title">MSHP-IDE</div>
+          <div class="brand-title">MSHP-IDE (Skulpt)</div>
           <div class="brand-sub">Web IDE Python</div>
         </div>
       </a>
@@ -70,7 +70,7 @@ print("Привет,", name)</pre>
         <button id="export-btn" class="btn ghost">Экспорт</button>
         <button id="remix-btn" class="btn ghost">Ремикс</button>
         <button id="reset-btn" class="btn ghost">Сброс</button>
-        <a class="btn ghost" href="skulpt.html#/">Skulpt ??????</a>
+        <a class="btn ghost" href="index.html#/">???????? ??????</a>
       </div>
 
       <div class="top-right">
@@ -157,6 +157,8 @@ print("Привет,", name)</pre>
     </section>
   </main>
 
-  <script type="module" src="assets/app.js"></script>
+  <script src="vendor/skulpt/skulpt-dist-master/skulpt.min.js"></script>
+  <script src="vendor/skulpt/skulpt-dist-master/skulpt-stdlib.js"></script>
+  <script type="module" src="assets/skulpt-app.js"></script>
 </body>
 </html>

@@ -1,17 +1,25 @@
 # Technical Guide
 
 ## Overview
-MSHP-Turtle is a static SPA that runs Python via Pyodide in a Web Worker. The
+MSHP-IDE is a static SPA that runs Python via Pyodide in a Web Worker. The
 main thread handles UI, storage, and turtle rendering. A service worker adds
 COOP/COEP headers for optional cross-origin isolation.
 
+The project also ships a Skulpt-based variant (`skulpt.html`) with a fully
+separate code path and assets.
+
 ## Directory structure
-- index.html: SPA shell and CSP
-- assets/app.js: main UI logic (router, editor, storage, share)
+- index.html: Pyodide SPA shell and CSP
+- skulpt.html: Skulpt SPA shell and CSP
+- assets/app.js: Pyodide UI/runtime logic (router, editor, storage, share)
+- assets/skulpt-app.js: Skulpt UI/runtime logic (independent copy)
 - assets/worker.js: Pyodide runtime worker
-- assets/styles.css: styling
+- assets/styles.css: Pyodide styling
+- assets/skulpt-styles.css: Skulpt styling (independent copy)
 - assets/fflate.esm.js: gzip fallback for browsers without CompressionStream
+- assets/skulpt-fflate.esm.js: Skulpt gzip fallback (independent copy)
 - pyodide-0.29.1/pyodide/: self-hosted Pyodide runtime
+- vendor/skulpt/skulpt-dist-master/: Skulpt runtime + stdlib
 - sw.js: COI service worker
 
 ## Boot flow
@@ -30,7 +38,8 @@ Hash-based routing supports GitHub Pages:
 - /#/embed : embed view with query settings
 
 ## Storage model
-IndexedDB database: mshp-turtle
+IndexedDB database: mshp-ide (Pyodide)
+IndexedDB database: mshp-ide-skulpt (Skulpt)
 Object stores:
 - projects: { projectId, title, files, assets, lastActiveFile, updatedAt }
 - blobs: { blobId, data }
@@ -95,6 +104,16 @@ Key fallbacks in assets/app.js:
 1. Replace pyodide-0.29.1/pyodide with a new version.
 2. Update the indexURL in assets/app.js (worker init).
 3. Ensure pyodide.js and pyodide.asm.wasm match the new version.
+
+## Swapping Pyodide and Skulpt pages (AI agent instructions)
+If the Skulpt experiment should become the default version:
+1. Make a backup copy of `index.html` (optional).
+2. Replace `index.html` with a copy of `skulpt.html`.
+3. Ensure the topbar/landing links still point to the alternate page.
+4. Keep both `assets/app.js` and `assets/skulpt-app.js` intact so rollback is easy.
+
+To switch back to Pyodide, restore the original `index.html` (or copy it back
+from version control) and keep `skulpt.html` as the alternate page.
 
 ## Local development
 - Use a static server (serve.bat or any HTTP server).
