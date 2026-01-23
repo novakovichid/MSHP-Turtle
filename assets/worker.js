@@ -357,6 +357,7 @@ def _emit(event):
 def _emit_turtle(state):
     _emit({
         "type": "turtle",
+        "tid": state.tid,
         "x": state.x,
         "y": state.y,
         "heading": state.heading,
@@ -364,12 +365,16 @@ def _emit_turtle(state):
         "speed": state.speed_value,
         "mode": state.screen.mode_name,
         "shape": state.shape_name,
-        "stretch": [state.stretch_wid, state.stretch_len]
+        "stretch": [state.stretch_wid, state.stretch_len],
+        "pencolor": state.pen_color,
+        "fillcolor": state.fill_color,
+        "pensize": state.pen_size
     })
 
 def _emit_move(state, x1, y1, x2, y2, pendown):
     _emit({
         "type": "move",
+        "tid": state.tid,
         "x1": x1,
         "y1": y1,
         "x2": x2,
@@ -386,6 +391,7 @@ def _emit_move(state, x1, y1, x2, y2, pendown):
 def _emit_turn(state):
     _emit({
         "type": "turn",
+        "tid": state.tid,
         "x": state.x,
         "y": state.y,
         "heading": state.heading,
@@ -433,6 +439,10 @@ def _normalize_key(key):
     if key is None:
         return None
     return str(key)
+
+def _next_turtle_id(screen):
+    screen._turtle_id += 1
+    return screen._turtle_id
 
 def _set_handler(store, key, fun, add):
     if fun is None:
@@ -494,6 +504,7 @@ class _ScreenState:
         self.color_mode = 1.0
         self.mode_name = "standard"
         self.world = None
+        self._turtle_id = 0
         self.pending_events = []
         self.listen_enabled = False
         self.key_press_handlers = {}
@@ -531,6 +542,7 @@ screen_state = _ScreenState()
 class _TurtleState:
     def __init__(self, screen):
         self.screen = screen
+        self.tid = _next_turtle_id(screen)
         self.reset_state()
 
     def reset_state(self):
@@ -769,6 +781,7 @@ class _TurtleState:
             color = _color_from_args(args)
             self.pen_color = _color_to_css(color, self.screen.color_mode)
             self.fill_color = _color_to_css(color, self.screen.color_mode)
+        _emit_turtle(self)
         return (self.pen_color, self.fill_color)
 
     def pencolor(self, *args):
@@ -776,6 +789,7 @@ class _TurtleState:
             return self.pen_color
         color = _color_from_args(args)
         self.pen_color = _color_to_css(color, self.screen.color_mode)
+        _emit_turtle(self)
         return self.pen_color
 
     def fillcolor(self, *args):
@@ -783,12 +797,14 @@ class _TurtleState:
             return self.fill_color
         color = _color_from_args(args)
         self.fill_color = _color_to_css(color, self.screen.color_mode)
+        _emit_turtle(self)
         return self.fill_color
 
     def pensize(self, size=None):
         if size is None:
             return self.pen_size
         self.pen_size = size
+        _emit_turtle(self)
 
     def width(self, size=None):
         return self.pensize(size)
@@ -796,7 +812,7 @@ class _TurtleState:
     def dot(self, size=None, color=None):
         if size is None:
             size = max(self.pen_size + 4, self.pen_size * 2)
-        _emit({"type": "dot", "x": self.x, "y": self.y, "size": size, "color": _color_to_css(color, self.screen.color_mode) if color else self.pen_color})
+        _emit({"type": "dot", "tid": self.tid, "x": self.x, "y": self.y, "size": size, "color": _color_to_css(color, self.screen.color_mode) if color else self.pen_color})
 
     def stamp(self):
         self._stamp_id += 1
@@ -820,7 +836,7 @@ class _TurtleState:
             self._stamps = self._stamps[-n:]
 
     def write(self, text, move=False, align="left", font=("Arial", 8, "normal")):
-        _emit({"type": "text", "x": self.x, "y": self.y, "text": str(text), "color": self.pen_color, "font": _font_to_css(font), "align": align})
+        _emit({"type": "text", "tid": self.tid, "x": self.x, "y": self.y, "text": str(text), "color": self.pen_color, "font": _font_to_css(font), "align": align})
 
     def clear(self):
         self.screen.clear()
@@ -844,13 +860,13 @@ class _TurtleState:
     def begin_fill(self):
         self.fill_active = True
         self.fill_path = [(self.x, self.y)]
-        _emit({"type": "fill_start"})
+        _emit({"type": "fill_start", "tid": self.tid})
 
     def end_fill(self):
         if self.fill_active and len(self.fill_path) > 2:
-            _emit({"type": "fill", "points": self.fill_path, "color": self.fill_color})
+            _emit({"type": "fill", "tid": self.tid, "points": self.fill_path, "color": self.fill_color})
         else:
-            _emit({"type": "fill_end"})
+            _emit({"type": "fill_end", "tid": self.tid})
         self.fill_active = False
         self.fill_path = []
 
@@ -1006,6 +1022,7 @@ class Screen:
         if picname is None:
             return self._state.bg_picture
         self._state.bg_picture = picname
+        _emit({"type": "bgpic", "name": picname})
 
     def setup(self, width=400, height=300, startx=None, starty=None):
         self._state.canvas_width = CANVAS_WIDTH

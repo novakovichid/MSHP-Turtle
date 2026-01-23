@@ -74,6 +74,16 @@ const TURTLE_SPEED_PRESETS = [
 ];
 const TURTLE_BASE_SPEED_PX_PER_MS = 1.1;
 const TURTLE_MIN_STEP_MS = 16;
+const DEFAULT_TURTLE_ID = "default";
+const IMAGE_ASSET_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".svg",
+  ".webp",
+  ".bmp"
+]);
 
 const state = {
   db: null,
@@ -191,24 +201,19 @@ const turtleRenderer = {
   strokeCanvas: null,
   strokeCtx: null,
   bg: "#f5f9ff",
+  bgImage: null,
+  bgImageName: null,
   centerX: 0,
   centerY: 0,
   world: null,
   mode: "standard",
-  fillActive: false,
-  turtle: {
-    x: 0,
-    y: 0,
-    heading: 0,
-    visible: true,
-    penSize: 2,
-    shape: "classic",
-    stretchWid: 1,
-    stretchLen: 1
-  },
+  turtles: new Map(),
+  turtleOrder: [],
   queue: [],
   animating: false,
-  current: null
+  current: null,
+  assetUrls: new Map(),
+  assetImages: new Map()
 };
 
 const turtleInput = {
@@ -2193,6 +2198,7 @@ async function runActiveFile() {
 
   const files = getCurrentFiles();
   const assets = state.mode === "project" ? await loadAssets() : [];
+  setRuntimeAssets(assets);
 
   state.worker.postMessage({
     type: "run",
@@ -2256,10 +2262,169 @@ async function loadAssets() {
     const buffer = await readBlobData(record.data);
     assets.push({
       name: asset.name,
+      mime: asset.mime,
       data: buffer
     });
   }
   return assets;
+}
+
+function normalizeAssetName(name) {
+  if (!name) {
+    return "";
+  }
+  let normalized = String(name);
+  if (normalized.startsWith("/project/")) {
+    normalized = normalized.slice("/project/".length);
+  }
+  if (normalized.startsWith("./")) {
+    normalized = normalized.slice(2);
+  }
+  return normalized;
+}
+
+function getAssetExtension(name) {
+  const normalized = normalizeAssetName(name);
+  const idx = normalized.lastIndexOf(".");
+  if (idx === -1) {
+    return "";
+  }
+  return normalized.slice(idx).toLowerCase();
+}
+
+function isImageAsset(name, mime) {
+  if (mime && mime.startsWith("image/")) {
+    return true;
+  }
+  return IMAGE_ASSET_EXTENSIONS.has(getAssetExtension(name));
+}
+
+function guessImageMime(name) {
+  switch (getAssetExtension(name)) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".svg":
+      return "image/svg+xml";
+    case ".webp":
+      return "image/webp";
+    case ".bmp":
+      return "image/bmp";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function revokeAssetUrls(renderer) {
+  if (!renderer.assetUrls || typeof URL === "undefined") {
+    return;
+  }
+  const uniqueUrls = new Set(renderer.assetUrls.values());
+  uniqueUrls.forEach((url) => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      // ignore revoke failures
+    }
+  });
+  renderer.assetUrls.clear();
+  renderer.assetImages.clear();
+}
+
+function setRuntimeAssets(assets) {
+  const renderer = getTurtleRenderer();
+  revokeAssetUrls(renderer);
+  if (!assets || !assets.length) {
+    return;
+  }
+  assets.forEach((asset) => {
+    const name = String(asset.name || "");
+    if (!name || !isImageAsset(name, asset.mime)) {
+      return;
+    }
+    let url = null;
+    if (typeof URL !== "undefined" && typeof Blob !== "undefined") {
+      try {
+        const blob = new Blob([asset.data], { type: asset.mime || guessImageMime(name) });
+        url = URL.createObjectURL(blob);
+      } catch (error) {
+        url = null;
+      }
+    }
+    if (!url) {
+      return;
+    }
+    const normalized = normalizeAssetName(name);
+    renderer.assetUrls.set(name, url);
+    renderer.assetUrls.set(normalized, url);
+    renderer.assetUrls.set(`/project/${normalized}`, url);
+    renderer.assetUrls.set(`./${normalized}`, url);
+  });
+}
+
+function getAssetUrl(renderer, name) {
+  if (!name || !renderer.assetUrls) {
+    return null;
+  }
+  const normalized = normalizeAssetName(name);
+  return (
+    renderer.assetUrls.get(name) ||
+    renderer.assetUrls.get(normalized) ||
+    renderer.assetUrls.get(`/project/${normalized}`) ||
+    renderer.assetUrls.get(`./${normalized}`) ||
+    null
+  );
+}
+
+function requestAssetImage(renderer, name, onReady) {
+  if (!name) {
+    if (onReady) {
+      onReady(null);
+    }
+    return null;
+  }
+  const normalized = normalizeAssetName(name);
+  const cached = renderer.assetImages.get(normalized);
+  if (cached) {
+    if (cached.status === "ready") {
+      if (onReady) {
+        onReady(cached.image);
+      }
+      return cached.image;
+    }
+    if (onReady) {
+      cached.callbacks = cached.callbacks || [];
+      cached.callbacks.push(onReady);
+    }
+    return null;
+  }
+  const url = getAssetUrl(renderer, name);
+  if (!url) {
+    if (onReady) {
+      onReady(null);
+    }
+    return null;
+  }
+  const image = new Image();
+  const entry = { image, status: "loading", callbacks: onReady ? [onReady] : [] };
+  renderer.assetImages.set(normalized, entry);
+  image.onload = () => {
+    entry.status = "ready";
+    const callbacks = entry.callbacks || [];
+    entry.callbacks = [];
+    callbacks.forEach((cb) => cb(image));
+    drawTurtleFrame(renderer);
+  };
+  image.onerror = () => {
+    entry.status = "error";
+    entry.callbacks = [];
+  };
+  image.src = url;
+  return null;
 }
 
 function getTurtleRenderer() {
@@ -2285,6 +2450,68 @@ function getTurtleRenderer() {
   return turtleRenderer;
 }
 
+function createTurtleState() {
+  return {
+    x: 0,
+    y: 0,
+    heading: 0,
+    visible: true,
+    penSize: 2,
+    penColor: "#000",
+    fillColor: "#20b46a",
+    shape: "classic",
+    stretchWid: 1,
+    stretchLen: 1,
+    fillActive: false
+  };
+}
+
+function getEventTurtleId(event) {
+  if (event && event.tid !== undefined && event.tid !== null) {
+    return String(event.tid);
+  }
+  return DEFAULT_TURTLE_ID;
+}
+
+function getTurtleState(renderer, id) {
+  const key = id ? String(id) : DEFAULT_TURTLE_ID;
+  let turtle = renderer.turtles.get(key);
+  if (!turtle) {
+    turtle = createTurtleState();
+    renderer.turtles.set(key, turtle);
+    renderer.turtleOrder.push(key);
+  }
+  return turtle;
+}
+
+function refreshTurtleBackground(renderer) {
+  renderer.drawCtx.fillStyle = renderer.bg;
+  renderer.drawCtx.fillRect(0, 0, renderer.drawCanvas.width, renderer.drawCanvas.height);
+  if (renderer.bgImage) {
+    renderer.drawCtx.drawImage(renderer.bgImage, 0, 0, renderer.drawCanvas.width, renderer.drawCanvas.height);
+  }
+}
+
+function setTurtleBackgroundImage(renderer, name) {
+  if (!name) {
+    renderer.bgImageName = null;
+    renderer.bgImage = null;
+    refreshTurtleBackground(renderer);
+    drawTurtleFrame(renderer);
+    return;
+  }
+  const nextName = String(name);
+  renderer.bgImageName = nextName;
+  requestAssetImage(renderer, nextName, (image) => {
+    if (!image || renderer.bgImageName !== nextName) {
+      return;
+    }
+    renderer.bgImage = image;
+    refreshTurtleBackground(renderer);
+    drawTurtleFrame(renderer);
+  });
+}
+
 function resetTurtleRenderer(width, height, bg, meta = {}) {
   const renderer = getTurtleRenderer();
   const fixedWidth = TURTLE_CANVAS_WIDTH;
@@ -2302,33 +2529,25 @@ function resetTurtleRenderer(width, height, bg, meta = {}) {
   renderer.centerY = fixedHeight / 2;
   renderer.world = normalizeWorld(meta.world);
   renderer.mode = meta.mode || "standard";
-  renderer.drawCtx.fillStyle = renderer.bg;
-  renderer.drawCtx.fillRect(0, 0, fixedWidth, fixedHeight);
+  renderer.bgImage = null;
+  renderer.bgImageName = null;
+  refreshTurtleBackground(renderer);
   if (renderer.strokeCtx) {
     renderer.strokeCtx.clearRect(0, 0, fixedWidth, fixedHeight);
   }
   renderer.queue = [];
   renderer.current = null;
   renderer.animating = false;
-  renderer.fillActive = false;
-  renderer.turtle = {
-    x: 0,
-    y: 0,
-    heading: 0,
-    visible: true,
-    penSize: 2,
-    shape: "classic",
-    stretchWid: 1,
-    stretchLen: 1
-  };
+  renderer.turtles.clear();
+  renderer.turtleOrder = [];
+  getTurtleState(renderer, DEFAULT_TURTLE_ID);
   drawTurtleFrame(renderer);
 }
 
 function clearTurtleLayer(bg) {
   const renderer = getTurtleRenderer();
   renderer.bg = bg || renderer.bg;
-  renderer.drawCtx.fillStyle = renderer.bg;
-  renderer.drawCtx.fillRect(0, 0, renderer.drawCanvas.width, renderer.drawCanvas.height);
+  refreshTurtleBackground(renderer);
   if (renderer.strokeCtx) {
     renderer.strokeCtx.clearRect(0, 0, renderer.strokeCanvas.width, renderer.strokeCanvas.height);
   }
@@ -2345,6 +2564,9 @@ function stopTurtleAnimation() {
 
 function enqueueTurtleEvent(event) {
   const renderer = getTurtleRenderer();
+  if (event && typeof event === "object") {
+    event._tid = getEventTurtleId(event);
+  }
   renderer.queue.push(event);
   if (!renderer.animating) {
     renderer.animating = true;
@@ -2385,6 +2607,7 @@ function processTurtleQueue(timestamp) {
 }
 
 function animateMove(renderer, event, timestamp) {
+  const turtle = getTurtleState(renderer, event._tid);
   if (!event._started) {
     event._started = true;
     event._startTime = timestamp;
@@ -2392,7 +2615,7 @@ function animateMove(renderer, event, timestamp) {
     event._lastY = event.y1;
     event._heading = Number.isFinite(event.heading)
       ? event.heading
-      : headingFromMove(event, renderer.turtle.heading, renderer.mode);
+      : headingFromMove(event, turtle.heading, renderer.mode);
     const distance = Math.hypot((event.x2 || 0) - (event.x1 || 0), (event.y2 || 0) - (event.y1 || 0));
     const duration = distance / turtleSpeedPxPerMs(event.speed);
     event._duration = Math.max(TURTLE_MIN_STEP_MS, duration);
@@ -2405,7 +2628,7 @@ function animateMove(renderer, event, timestamp) {
   if (event.pen) {
     const start = toCanvasCoords(renderer, event._lastX, event._lastY);
     const end = toCanvasCoords(renderer, x, y);
-    const ctx = renderer.fillActive && renderer.strokeCtx ? renderer.strokeCtx : renderer.drawCtx;
+    const ctx = turtle.fillActive && renderer.strokeCtx ? renderer.strokeCtx : renderer.drawCtx;
     ctx.strokeStyle = event.color || "#1c6bff";
     ctx.lineWidth = event.width || 2;
     ctx.beginPath();
@@ -2414,12 +2637,12 @@ function animateMove(renderer, event, timestamp) {
     ctx.stroke();
   }
 
-  renderer.turtle.x = x;
-  renderer.turtle.y = y;
-  renderer.turtle.heading = event._heading;
-  renderer.turtle.visible = event.visible !== false;
+  turtle.x = x;
+  turtle.y = y;
+  turtle.heading = event._heading;
+  turtle.visible = event.visible !== false;
   if (event.width) {
-    renderer.turtle.penSize = event.width;
+    turtle.penSize = event.width;
   }
 
   event._lastX = x;
@@ -2430,23 +2653,24 @@ function animateMove(renderer, event, timestamp) {
 }
 
 function animateTurn(renderer, event, timestamp) {
+  const turtle = getTurtleState(renderer, event._tid);
   if (!event._started) {
     event._started = true;
     event._startTime = timestamp;
-    event._from = renderer.turtle.heading;
-    event._to = Number.isFinite(event.heading) ? event.heading : renderer.turtle.heading;
+    event._from = turtle.heading;
+    event._to = Number.isFinite(event.heading) ? event.heading : turtle.heading;
     event._duration = TURTLE_MIN_STEP_MS * 2;
   }
 
   const t = Math.min(1, (timestamp - event._startTime) / event._duration);
   const delta = ((event._to - event._from + 540) % 360) - 180;
-  renderer.turtle.heading = event._from + delta * t;
+  turtle.heading = event._from + delta * t;
   if (Number.isFinite(event.x) && Number.isFinite(event.y)) {
-    renderer.turtle.x = event.x;
-    renderer.turtle.y = event.y;
+    turtle.x = event.x;
+    turtle.y = event.y;
   }
   if (event.visible !== undefined) {
-    renderer.turtle.visible = event.visible;
+    turtle.visible = event.visible;
   }
   drawTurtleFrame(renderer);
   return t >= 1;
@@ -2454,7 +2678,8 @@ function animateTurn(renderer, event, timestamp) {
 
 function applyTurtleEvent(renderer, event) {
   if (event.type === "fill_start") {
-    renderer.fillActive = true;
+    const turtle = getTurtleState(renderer, event._tid);
+    turtle.fillActive = true;
     if (renderer.strokeCtx) {
       renderer.strokeCtx.clearRect(0, 0, renderer.strokeCanvas.width, renderer.strokeCanvas.height);
     }
@@ -2462,7 +2687,8 @@ function applyTurtleEvent(renderer, event) {
   }
 
   if (event.type === "fill_end") {
-    renderer.fillActive = false;
+    const turtle = getTurtleState(renderer, event._tid);
+    turtle.fillActive = false;
     if (renderer.strokeCtx) {
       renderer.strokeCtx.clearRect(0, 0, renderer.strokeCanvas.width, renderer.strokeCanvas.height);
     }
@@ -2471,41 +2697,52 @@ function applyTurtleEvent(renderer, event) {
   }
 
   if (event.type === "turtle") {
+    const turtle = getTurtleState(renderer, event._tid);
     if (Number.isFinite(event.x) && Number.isFinite(event.y)) {
-      renderer.turtle.x = event.x;
-      renderer.turtle.y = event.y;
+      turtle.x = event.x;
+      turtle.y = event.y;
     }
     if (Number.isFinite(event.heading)) {
-      renderer.turtle.heading = event.heading;
+      turtle.heading = event.heading;
     }
     if (event.visible !== undefined) {
-      renderer.turtle.visible = event.visible;
+      turtle.visible = event.visible;
     }
     if (event.shape) {
-      renderer.turtle.shape = String(event.shape);
+      turtle.shape = String(event.shape);
     }
     if (Array.isArray(event.stretch)) {
       const wid = Number(event.stretch[0]);
       const len = Number(event.stretch[1]);
       if (Number.isFinite(wid)) {
-        renderer.turtle.stretchWid = wid;
+        turtle.stretchWid = wid;
       }
       if (Number.isFinite(len)) {
-        renderer.turtle.stretchLen = len;
+        turtle.stretchLen = len;
       }
+    }
+    if (event.pencolor) {
+      turtle.penColor = String(event.pencolor);
+    }
+    if (event.fillcolor) {
+      turtle.fillColor = String(event.fillcolor);
+    }
+    if (Number.isFinite(event.pensize)) {
+      turtle.penSize = event.pensize;
     }
     drawTurtleFrame(renderer);
     return;
   }
 
   if (event.type === "dot") {
+    const turtle = getTurtleState(renderer, event._tid);
     if (Number.isFinite(event.x) && Number.isFinite(event.y)) {
-      renderer.turtle.x = event.x;
-      renderer.turtle.y = event.y;
+      turtle.x = event.x;
+      turtle.y = event.y;
     }
     const size = event.size || 4;
     const pos = toCanvasCoords(renderer, event.x || 0, event.y || 0);
-    const ctx = renderer.fillActive && renderer.strokeCtx ? renderer.strokeCtx : renderer.drawCtx;
+    const ctx = turtle.fillActive && renderer.strokeCtx ? renderer.strokeCtx : renderer.drawCtx;
     ctx.fillStyle = event.color || "#1c6bff";
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, size / 2, 0, Math.PI * 2);
@@ -2533,14 +2770,16 @@ function applyTurtleEvent(renderer, event) {
       renderer.drawCtx.drawImage(renderer.strokeCanvas, 0, 0);
       renderer.strokeCtx.clearRect(0, 0, renderer.strokeCanvas.width, renderer.strokeCanvas.height);
     }
-    renderer.fillActive = false;
+    const turtle = getTurtleState(renderer, event._tid);
+    turtle.fillActive = false;
     drawTurtleFrame(renderer);
     return;
   }
 
   if (event.type === "text") {
+    const turtle = getTurtleState(renderer, event._tid);
     const pos = toCanvasCoords(renderer, event.x || 0, event.y || 0);
-    const ctx = renderer.fillActive && renderer.strokeCtx ? renderer.strokeCtx : renderer.drawCtx;
+    const ctx = turtle.fillActive && renderer.strokeCtx ? renderer.strokeCtx : renderer.drawCtx;
     ctx.fillStyle = event.color || "#1c6bff";
     ctx.font = event.font || "16px Rubik";
     const prevAlign = ctx.textAlign;
@@ -2565,7 +2804,12 @@ function drawTurtleFrame(renderer) {
   if (renderer.strokeCanvas) {
     renderer.ctx.drawImage(renderer.strokeCanvas, 0, 0);
   }
-  drawTurtleIcon(renderer);
+  renderer.turtleOrder.forEach((id) => {
+    const turtle = renderer.turtles.get(id);
+    if (turtle) {
+      drawTurtleIcon(renderer, turtle);
+    }
+  });
 }
 
 function applyTurtleMeta(renderer, event) {
@@ -2607,25 +2851,34 @@ function displayHeading(renderer, heading) {
   return ((base % 360) + 360) % 360;
 }
 
-function drawTurtleIcon(renderer) {
-  if (!renderer.turtle.visible) {
+function drawTurtleIcon(renderer, turtle) {
+  if (!turtle || !turtle.visible) {
     return;
   }
-  const pos = toCanvasCoords(renderer, renderer.turtle.x, renderer.turtle.y);
-  const baseSize = 10 + Math.min(6, renderer.turtle.penSize || 2);
-  const stretchLen = Number.isFinite(renderer.turtle.stretchLen) ? renderer.turtle.stretchLen : 1;
-  const stretchWid = Number.isFinite(renderer.turtle.stretchWid) ? renderer.turtle.stretchWid : 1;
+  const pos = toCanvasCoords(renderer, turtle.x, turtle.y);
+  const baseSize = 10 + Math.min(6, turtle.penSize || 2);
+  const stretchLen = Number.isFinite(turtle.stretchLen) ? turtle.stretchLen : 1;
+  const stretchWid = Number.isFinite(turtle.stretchWid) ? turtle.stretchWid : 1;
   const sizeX = baseSize * Math.max(0.2, stretchLen);
   const sizeY = baseSize * Math.max(0.2, stretchWid);
-  const heading = displayHeading(renderer, renderer.turtle.heading);
+  const heading = displayHeading(renderer, turtle.heading);
   const ctx = renderer.ctx;
-  const shape = String(renderer.turtle.shape || "classic").toLowerCase();
+  const shape = String(turtle.shape || "classic").toLowerCase();
   ctx.save();
   ctx.translate(pos.x, pos.y);
   ctx.rotate((-heading * Math.PI) / 180);
-  ctx.fillStyle = "#20b46a";
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
+  ctx.fillStyle = turtle.fillColor || "#20b46a";
+  ctx.strokeStyle = turtle.penColor || "rgba(0, 0, 0, 0.25)";
   ctx.lineWidth = 1;
+  const assetUrl = getAssetUrl(renderer, turtle.shape);
+  if (assetUrl || isImageAsset(shape) || isImageAsset(turtle.shape)) {
+    const image = requestAssetImage(renderer, turtle.shape, () => drawTurtleFrame(renderer));
+    if (image) {
+      ctx.drawImage(image, -sizeX, -sizeY, sizeX * 2, sizeY * 2);
+      ctx.restore();
+      return;
+    }
+  }
   if (shape === "circle") {
     ctx.beginPath();
     if (typeof ctx.ellipse === "function") {
@@ -2781,14 +3034,20 @@ function getCanvasPoint(event) {
 }
 
 function isPointOnTurtle(renderer, x, y) {
-  if (!renderer.turtle.visible) {
-    return false;
+  for (let i = renderer.turtleOrder.length - 1; i >= 0; i -= 1) {
+    const turtle = renderer.turtles.get(renderer.turtleOrder[i]);
+    if (!turtle || !turtle.visible) {
+      continue;
+    }
+    const pos = toCanvasCoords(renderer, turtle.x, turtle.y);
+    const size = 12 + Math.min(8, turtle.penSize || 2);
+    const dx = x - pos.x;
+    const dy = y - pos.y;
+    if (Math.hypot(dx, dy) <= size) {
+      return true;
+    }
   }
-  const pos = toCanvasCoords(renderer, renderer.turtle.x, renderer.turtle.y);
-  const size = 12 + Math.min(8, renderer.turtle.penSize || 2);
-  const dx = x - pos.x;
-  const dy = y - pos.y;
-  return Math.hypot(dx, dy) <= size;
+  return false;
 }
 
 function sendTurtleInputEvent(event) {
@@ -2982,6 +3241,11 @@ function renderTurtleEvent(event) {
     }
     return;
   }
+  if (event.type === "bgpic") {
+    const renderer = getTurtleRenderer();
+    setTurtleBackgroundImage(renderer, event.name);
+    return;
+  }
   const renderer = getTurtleRenderer();
   if (event.type === "world") {
     applyTurtleMeta(renderer, event);
@@ -3010,6 +3274,7 @@ function renderTurtleEvent(event) {
       width: event.width,
       heading: event.heading,
       visible: true,
+      tid: event.tid,
       mode: event.mode || renderer.mode
     });
     return;

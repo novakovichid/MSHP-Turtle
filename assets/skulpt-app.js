@@ -72,6 +72,15 @@ const TURTLE_SPEED_PRESETS = [
 ];
 const TURTLE_BASE_SPEED_PX_PER_MS = 1.1;
 const TURTLE_MIN_STEP_MS = 16;
+const IMAGE_ASSET_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".svg",
+  ".webp",
+  ".bmp"
+]);
 
 const state = {
   db: null,
@@ -89,6 +98,7 @@ const state = {
   runToken: 0,
   skulptFiles: null,
   skulptAssets: null,
+  skulptAssetUrls: new Map(),
   runtimeBlocked: false,
   stdinQueue: [],
   stdinWaiting: false,
@@ -1828,6 +1838,7 @@ function initSkulpt() {
 function configureSkulptRuntime(files, assets) {
   state.skulptFiles = buildSkulptFileMap(files);
   state.skulptAssets = buildSkulptAssetMap(assets);
+  const turtleAssets = setSkulptTurtleAssets(assets);
   Sk.inBrowser = false;
   Sk.configure({
     output: (text) => appendConsole(text, false),
@@ -1843,7 +1854,8 @@ function configureSkulptRuntime(files, assets) {
   Sk.TurtleGraphics = {
     target: "turtle-canvas",
     width: TURTLE_CANVAS_WIDTH,
-    height: TURTLE_CANVAS_HEIGHT
+    height: TURTLE_CANVAS_HEIGHT,
+    assets: turtleAssets
   };
   resetNativeTurtle();
 }
@@ -1902,6 +1914,110 @@ function buildSkulptAssetMap(assets) {
     map.set(name, decoded);
   });
   return map;
+}
+
+function normalizeAssetName(name) {
+  if (!name) {
+    return "";
+  }
+  let normalized = String(name);
+  if (normalized.startsWith("/project/")) {
+    normalized = normalized.slice("/project/".length);
+  }
+  if (normalized.startsWith("./")) {
+    normalized = normalized.slice(2);
+  }
+  return normalized;
+}
+
+function getAssetExtension(name) {
+  const normalized = normalizeAssetName(name);
+  const idx = normalized.lastIndexOf(".");
+  if (idx === -1) {
+    return "";
+  }
+  return normalized.slice(idx).toLowerCase();
+}
+
+function isImageAsset(name, mime) {
+  if (mime && mime.startsWith("image/")) {
+    return true;
+  }
+  return IMAGE_ASSET_EXTENSIONS.has(getAssetExtension(name));
+}
+
+function guessImageMime(name) {
+  switch (getAssetExtension(name)) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".svg":
+      return "image/svg+xml";
+    case ".webp":
+      return "image/webp";
+    case ".bmp":
+      return "image/bmp";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function revokeSkulptAssetUrls() {
+  if (!state.skulptAssetUrls || typeof URL === "undefined") {
+    return;
+  }
+  const uniqueUrls = new Set(state.skulptAssetUrls.values());
+  uniqueUrls.forEach((url) => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      // ignore revoke failures
+    }
+  });
+  state.skulptAssetUrls = new Map();
+}
+
+function setSkulptTurtleAssets(assets) {
+  revokeSkulptAssetUrls();
+  const assetMap = {};
+  const urlMap = new Map();
+  if (!assets || !assets.length) {
+    return assetMap;
+  }
+  assets.forEach((asset) => {
+    const name = String(asset.name || "");
+    if (!name || !isImageAsset(name, asset.mime)) {
+      return;
+    }
+    if (typeof URL === "undefined" || typeof Blob === "undefined") {
+      return;
+    }
+    let url = null;
+    try {
+      const blob = new Blob([asset.data], { type: asset.mime || guessImageMime(name) });
+      url = URL.createObjectURL(blob);
+    } catch (error) {
+      url = null;
+    }
+    if (!url) {
+      return;
+    }
+    const normalized = normalizeAssetName(name);
+    assetMap[name] = url;
+    assetMap[normalized] = url;
+    assetMap[`/project/${normalized}`] = url;
+    assetMap[`./${normalized}`] = url;
+    urlMap.set(name, url);
+    urlMap.set(normalized, url);
+    urlMap.set(`/project/${normalized}`, url);
+    urlMap.set(`./${normalized}`, url);
+  });
+  state.skulptAssetUrls = urlMap;
+  return assetMap;
 }
 
 const TEXT_ASSET_EXTENSIONS = new Set([
@@ -2096,6 +2212,7 @@ async function loadAssets() {
     const buffer = await readBlobData(record.data);
     assets.push({
       name: asset.name,
+      mime: asset.mime,
       data: buffer
     });
   }
