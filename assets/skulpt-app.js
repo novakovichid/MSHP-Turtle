@@ -10,7 +10,7 @@ const CONFIG = {
   WORD_WRAP: true
 };
 
-const VALID_FILENAME = /^[A-Za-z0-9._-]+$/;
+const VALID_FILENAME = /^[A-Za-z0-9._\-\u0400-\u04FF]+$/;
 const encoder = typeof TextEncoder !== "undefined"
   ? new TextEncoder()
   : {
@@ -128,6 +128,7 @@ const els = {
   resetBtn: document.getElementById("reset-btn"),
   tabSizeBtn: document.getElementById("tab-size-btn"),
   wrapBtn: document.getElementById("wrap-btn"),
+  runTarget: document.getElementById("run-target"),
   turtleSpeedRange: document.getElementById("turtle-speed"),
   turtleSpeedLabel: document.getElementById("turtle-speed-label"),
   sidebar: document.getElementById("sidebar"),
@@ -240,6 +241,9 @@ function bindUi() {
   els.runBtn.addEventListener("click", runActiveFile);
   els.stopBtn.addEventListener("click", stopRun);
   els.clearBtn.addEventListener("click", clearConsole);
+  if (els.runTarget) {
+    els.runTarget.addEventListener("change", () => refreshRunTargets(true));
+  }
   els.shareBtn.addEventListener("click", shareProject);
   els.exportBtn.addEventListener("click", exportProject);
   els.remixBtn.addEventListener("click", remixSnapshot);
@@ -564,6 +568,41 @@ function updateTabs() {
     tab.addEventListener("click", () => setActiveFile(file.name));
     els.fileTabs.appendChild(tab);
   });
+  refreshRunTargets(true);
+}
+
+function refreshRunTargets(preserveSelection) {
+  if (!els.runTarget) {
+    return;
+  }
+  const files = getCurrentFiles();
+  const previous = preserveSelection ? els.runTarget.value : "";
+  els.runTarget.innerHTML = "";
+  files.forEach((file) => {
+    const option = document.createElement("option");
+    option.value = file.name;
+    option.textContent = file.name;
+    els.runTarget.appendChild(option);
+  });
+  const preferred = previous && getFileByName(previous) ? previous : state.activeFile || files[0]?.name || "";
+  if (preferred) {
+    els.runTarget.value = preferred;
+  }
+}
+
+function getRunTargetName() {
+  if (!els.runTarget) {
+    return state.activeFile || null;
+  }
+  const selected = els.runTarget.value;
+  if (selected && getFileByName(selected)) {
+    return selected;
+  }
+  const fallback = state.activeFile || getCurrentFiles()[0]?.name || null;
+  if (fallback) {
+    els.runTarget.value = fallback;
+  }
+  return fallback;
 }
 
 function setActiveFile(name) {
@@ -778,11 +817,16 @@ async function createFile() {
     return;
   }
   const trimmed = name.trim();
-  if (!validateFileName(trimmed)) {
+  const normalized = normalizePythonFileName(trimmed);
+  if (!normalized) {
+    showToast("Можно создавать только файлы .py.");
+    return;
+  }
+  if (!validateFileName(normalized)) {
     showToast("Некорректное имя файла.");
     return;
   }
-  if (getFileByName(trimmed)) {
+  if (getFileByName(normalized)) {
     showToast("Файл уже существует.");
     return;
   }
@@ -792,18 +836,18 @@ async function createFile() {
   }
 
   if (state.mode === "project") {
-    state.project.files.push({ name: trimmed, content: "" });
-    state.project.lastActiveFile = trimmed;
+    state.project.files.push({ name: normalized, content: "" });
+    state.project.lastActiveFile = normalized;
     scheduleSave();
   } else if (state.mode === "snapshot") {
     const { draft } = state.snapshot;
-    draft.overlayFiles[trimmed] = "";
-    draft.deletedFiles = draft.deletedFiles.filter((item) => item !== trimmed);
-    draft.draftLastActiveFile = trimmed;
+    draft.overlayFiles[normalized] = "";
+    draft.deletedFiles = draft.deletedFiles.filter((item) => item !== normalized);
+    draft.draftLastActiveFile = normalized;
     scheduleDraftSave();
   }
 
-  setActiveFile(trimmed);
+  setActiveFile(normalized);
   renderFiles(getCurrentFiles());
   updateTabs();
 }
@@ -825,28 +869,33 @@ async function renameFile() {
     return;
   }
   const trimmed = nextName.trim();
-  if (trimmed === state.activeFile) {
+  const normalized = normalizePythonFileName(trimmed);
+  if (!normalized) {
+    showToast("Можно создавать только файлы .py.");
     return;
   }
-  if (!validateFileName(trimmed)) {
+  if (normalized === state.activeFile) {
+    return;
+  }
+  if (!validateFileName(normalized)) {
     showToast("Некорректное имя файла.");
     return;
   }
-  if (getFileByName(trimmed)) {
+  if (getFileByName(normalized)) {
     showToast("Файл уже существует.");
     return;
   }
 
   if (state.mode === "project") {
     const file = getFileByName(state.activeFile);
-    file.name = trimmed;
-    state.project.lastActiveFile = trimmed;
+    file.name = normalized;
+    state.project.lastActiveFile = normalized;
     scheduleSave();
   } else if (state.mode === "snapshot") {
-    renameSnapshotFile(state.activeFile, trimmed);
+    renameSnapshotFile(state.activeFile, normalized);
   }
 
-  setActiveFile(trimmed);
+  setActiveFile(normalized);
   renderFiles(getCurrentFiles());
   updateTabs();
 }
@@ -950,6 +999,23 @@ function validateFileName(name) {
     return false;
   }
   return VALID_FILENAME.test(name);
+}
+
+function normalizePythonFileName(name) {
+  if (!name) {
+    return null;
+  }
+  const trimmed = String(name).trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (!trimmed.includes(".")) {
+    return `${trimmed}.py`;
+  }
+  if (!trimmed.toLowerCase().endsWith(".py")) {
+    return null;
+  }
+  return trimmed;
 }
 
 function getCurrentFiles() {
@@ -1841,7 +1907,7 @@ async function runActiveFile() {
     showGuard(true);
     return;
   }
-  const entryName = getActiveTabName() || state.activeFile;
+  const entryName = getRunTargetName();
   const file = getFileByName(entryName);
   if (!file) {
     showToast("No active file.");
@@ -1869,7 +1935,8 @@ async function runActiveFile() {
   }
   state.runTimeout = setTimeout(() => {
     softInterrupt("Time limit exceeded.");
-    stopRun();
+    state.runToken += 1;
+    hardStop("error");
   }, CONFIG.RUN_TIMEOUT_MS + 200);
 
   try {
@@ -1885,7 +1952,7 @@ async function runActiveFile() {
       return;
     }
     appendConsole(`\n${formatSkulptError(error)}\n`, true);
-    updateRunStatus("error");
+    hardStop("error");
   } finally {
     if (state.runToken === runToken) {
       enableConsoleInput(false);
@@ -1904,14 +1971,14 @@ async function runActiveFile() {
 function stopRun() {
   state.runToken += 1;
   softInterrupt("Stopped by user.");
-  hardStop();
+  hardStop("stopped");
 }
 
 function softInterrupt(message) {
   appendConsole(`\n${message}\n`, true);
 }
 
-function hardStop() {
+function hardStop(status = "stopped") {
   stopTurtleAnimation();
   if (state.runTimeout) {
     clearTimeout(state.runTimeout);
@@ -1924,7 +1991,7 @@ function hardStop() {
   state.stdinQueue = [];
   state.stdinWaiting = false;
   state.stdinResolver = null;
-  updateRunStatus("stopped");
+  updateRunStatus(status);
   enableConsoleInput(false);
   els.stopBtn.disabled = true;
 }

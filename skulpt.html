@@ -110,9 +110,11 @@ print("Привет,", name)</pre>
       <section class="editor-pane">
         <div class="editor-toolbar">
           <div class="editor-actions">
-            <button id="run-btn" class="btn primary">Запуск</button>
+            <div class="run-group">
+              <button id="run-btn" class="btn primary">Запуск</button>
+              <select id="run-target" class="run-target" aria-label="Файл запуска"></select>
+            </div>
             <button id="stop-btn" class="btn danger" disabled>Стоп</button>
-            <button id="clear-btn" class="btn ghost">Очистить консоль</button>
             <div id="run-status" class="run-status">Ожидание</div>
           </div>
           <div class="editor-controls">
@@ -133,6 +135,9 @@ print("Привет,", name)</pre>
       <section class="console-pane">
         <div class="panel-header">
           <div class="panel-title">Консоль</div>
+          <div class="panel-actions">
+            <button id="clear-btn" class="btn small ghost">Очистить консоль</button>
+          </div>
         </div>
         <pre id="console-output" class="console-output"></pre>
         <div class="console-input-row">

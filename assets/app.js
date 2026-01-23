@@ -11,7 +11,7 @@ const CONFIG = {
 };
 const STDIN_SHARED_BYTES = 8192;
 
-const VALID_FILENAME = /^[A-Za-z0-9._-]+$/;
+const VALID_FILENAME = /^[A-Za-z0-9._\-\u0400-\u04FF]+$/;
 const encoder = typeof TextEncoder !== "undefined"
   ? new TextEncoder()
   : {
@@ -88,6 +88,7 @@ const state = {
   worker: null,
   workerReady: false,
   runtimeBlocked: false,
+  runStatus: "idle",
   stdinQueue: [],
   stdinWaiting: false,
   stdinMode: "message",
@@ -134,6 +135,7 @@ const els = {
   resetBtn: document.getElementById("reset-btn"),
   tabSizeBtn: document.getElementById("tab-size-btn"),
   wrapBtn: document.getElementById("wrap-btn"),
+  runTarget: document.getElementById("run-target"),
   turtleSpeedRange: document.getElementById("turtle-speed"),
   turtleSpeedLabel: document.getElementById("turtle-speed-label"),
   sidebar: document.getElementById("sidebar"),
@@ -376,6 +378,9 @@ function bindUi() {
   els.runBtn.addEventListener("click", runActiveFile);
   els.stopBtn.addEventListener("click", stopRun);
   els.clearBtn.addEventListener("click", clearConsole);
+  if (els.runTarget) {
+    els.runTarget.addEventListener("change", () => refreshRunTargets(true));
+  }
   els.shareBtn.addEventListener("click", shareProject);
   els.exportBtn.addEventListener("click", exportProject);
   els.remixBtn.addEventListener("click", remixSnapshot);
@@ -742,6 +747,41 @@ function updateTabs() {
     tab.addEventListener("click", () => setActiveFile(file.name));
     els.fileTabs.appendChild(tab);
   });
+  refreshRunTargets(true);
+}
+
+function refreshRunTargets(preserveSelection) {
+  if (!els.runTarget) {
+    return;
+  }
+  const files = getCurrentFiles();
+  const previous = preserveSelection ? els.runTarget.value : "";
+  els.runTarget.innerHTML = "";
+  files.forEach((file) => {
+    const option = document.createElement("option");
+    option.value = file.name;
+    option.textContent = file.name;
+    els.runTarget.appendChild(option);
+  });
+  const preferred = previous && getFileByName(previous) ? previous : state.activeFile || files[0]?.name || "";
+  if (preferred) {
+    els.runTarget.value = preferred;
+  }
+}
+
+function getRunTargetName() {
+  if (!els.runTarget) {
+    return state.activeFile || null;
+  }
+  const selected = els.runTarget.value;
+  if (selected && getFileByName(selected)) {
+    return selected;
+  }
+  const fallback = state.activeFile || getCurrentFiles()[0]?.name || null;
+  if (fallback) {
+    els.runTarget.value = fallback;
+  }
+  return fallback;
 }
 
 function setActiveFile(name) {
@@ -954,11 +994,16 @@ async function createFile() {
     return;
   }
   const trimmed = name.trim();
-  if (!validateFileName(trimmed)) {
+  const normalized = normalizePythonFileName(trimmed);
+  if (!normalized) {
+    showToast("Можно создавать только файлы .py.");
+    return;
+  }
+  if (!validateFileName(normalized)) {
     showToast("Некорректное имя файла.");
     return;
   }
-  if (getFileByName(trimmed)) {
+  if (getFileByName(normalized)) {
     showToast("Файл уже существует.");
     return;
   }
@@ -968,18 +1013,18 @@ async function createFile() {
   }
 
   if (state.mode === "project") {
-    state.project.files.push({ name: trimmed, content: "" });
-    state.project.lastActiveFile = trimmed;
+    state.project.files.push({ name: normalized, content: "" });
+    state.project.lastActiveFile = normalized;
     scheduleSave();
   } else if (state.mode === "snapshot") {
     const { draft } = state.snapshot;
-    draft.overlayFiles[trimmed] = "";
-    draft.deletedFiles = draft.deletedFiles.filter((item) => item !== trimmed);
-    draft.draftLastActiveFile = trimmed;
+    draft.overlayFiles[normalized] = "";
+    draft.deletedFiles = draft.deletedFiles.filter((item) => item !== normalized);
+    draft.draftLastActiveFile = normalized;
     scheduleDraftSave();
   }
 
-  setActiveFile(trimmed);
+  setActiveFile(normalized);
   renderFiles(getCurrentFiles());
   updateTabs();
 }
@@ -1001,28 +1046,33 @@ async function renameFile() {
     return;
   }
   const trimmed = nextName.trim();
-  if (trimmed === state.activeFile) {
+  const normalized = normalizePythonFileName(trimmed);
+  if (!normalized) {
+    showToast("Можно создавать только файлы .py.");
     return;
   }
-  if (!validateFileName(trimmed)) {
+  if (normalized === state.activeFile) {
+    return;
+  }
+  if (!validateFileName(normalized)) {
     showToast("Некорректное имя файла.");
     return;
   }
-  if (getFileByName(trimmed)) {
+  if (getFileByName(normalized)) {
     showToast("Файл уже существует.");
     return;
   }
 
   if (state.mode === "project") {
     const file = getFileByName(state.activeFile);
-    file.name = trimmed;
-    state.project.lastActiveFile = trimmed;
+    file.name = normalized;
+    state.project.lastActiveFile = normalized;
     scheduleSave();
   } else if (state.mode === "snapshot") {
-    renameSnapshotFile(state.activeFile, trimmed);
+    renameSnapshotFile(state.activeFile, normalized);
   }
 
-  setActiveFile(trimmed);
+  setActiveFile(normalized);
   renderFiles(getCurrentFiles());
   updateTabs();
 }
@@ -1126,6 +1176,23 @@ function validateFileName(name) {
     return false;
   }
   return VALID_FILENAME.test(name);
+}
+
+function normalizePythonFileName(name) {
+  if (!name) {
+    return null;
+  }
+  const trimmed = String(name).trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (!trimmed.includes(".")) {
+    return `${trimmed}.py`;
+  }
+  if (!trimmed.toLowerCase().endsWith(".py")) {
+    return null;
+  }
+  return trimmed;
 }
 
 function getCurrentFiles() {
@@ -1822,6 +1889,12 @@ function appendConsoleText(target, text) {
 function updateRunStatus(status) {
   const key = String(status || "").toLowerCase();
   els.runStatus.textContent = RUN_STATUS_LABELS[key] || status;
+  state.runStatus = key || status;
+}
+
+function isRuntimeErrorText(text) {
+  const message = String(text || "");
+  return message.includes("Traceback") || /\b(Error|Exception)\b/.test(message);
 }
 
 function enableConsoleInput(enable) {
@@ -1968,12 +2041,22 @@ function registerWorker(worker) {
   state.worker = worker;
   state.workerReady = false;
   worker.addEventListener("message", (event) => handleWorkerMessage(event.data));
+  worker.addEventListener("error", (event) => handleWorkerFailure(event));
+  worker.addEventListener("messageerror", (event) => handleWorkerFailure(event));
   const stdinShared = setupSharedStdin();
   worker.postMessage({
     type: "init",
     indexURL: new URL("pyodide-0.29.1/pyodide/", location.href).toString(),
     stdinShared
   });
+}
+
+function handleWorkerFailure(event) {
+  const detail = event && event.message ? `Worker error: ${event.message}` : "Worker error.";
+  appendConsole(`\n${detail}\n`, true);
+  updateRunStatus("error");
+  setGuardMessage("Ошибка среды", "Не удалось загрузить среду выполнения.");
+  showGuard(true);
 }
 
 function handleWorkerMessage(message) {
@@ -1989,6 +2072,11 @@ function handleWorkerMessage(message) {
   }
   if (message.type === "stderr") {
     appendConsole(message.data, true);
+    if (state.runStatus === "running" && isRuntimeErrorText(message.data)) {
+      updateRunStatus("error");
+      enableConsoleInput(false);
+      els.stopBtn.disabled = true;
+    }
     return;
   }
   if (message.type === "status") {
@@ -2051,7 +2139,7 @@ async function runActiveFile() {
     showGuard(true);
     return;
   }
-  const entryName = getActiveTabName() || state.activeFile;
+  const entryName = getRunTargetName();
   const file = getFileByName(entryName);
   if (!file) {
     showToast("Нет активного файла.");
