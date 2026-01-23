@@ -1835,10 +1835,24 @@ function initSkulpt() {
   showGuard(false);
 }
 
+function getTurtleCanvasSize() {
+  if (!els.turtleCanvas) {
+    return { width: TURTLE_CANVAS_WIDTH, height: TURTLE_CANVAS_HEIGHT };
+  }
+  const rect = els.turtleCanvas.getBoundingClientRect();
+  const width = Math.round(rect.width) || TURTLE_CANVAS_WIDTH;
+  const height = Math.round(rect.height) || TURTLE_CANVAS_HEIGHT;
+  return {
+    width: Math.max(1, width),
+    height: Math.max(1, height)
+  };
+}
+
 function configureSkulptRuntime(files, assets) {
   state.skulptFiles = buildSkulptFileMap(files);
   state.skulptAssets = buildSkulptAssetMap(assets);
   const turtleAssets = setSkulptTurtleAssets(assets);
+  const turtleSize = getTurtleCanvasSize();
   Sk.inBrowser = false;
   Sk.configure({
     output: (text) => appendConsole(text, false),
@@ -1853,8 +1867,8 @@ function configureSkulptRuntime(files, assets) {
   Sk.execStart = Date.now();
   Sk.TurtleGraphics = {
     target: "turtle-canvas",
-    width: TURTLE_CANVAS_WIDTH,
-    height: TURTLE_CANVAS_HEIGHT,
+    width: turtleSize.width,
+    height: turtleSize.height,
     assets: turtleAssets
   };
   resetNativeTurtle();
