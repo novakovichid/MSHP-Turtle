@@ -8,7 +8,8 @@ All data stays in the browser.
 ## Requirements
 - A modern browser with WebAssembly and Web Workers.
 - A local or hosted static server (file:// URLs are not supported).
-- Recommended browsers: Chrome, Edge, Firefox, Safari.
+- Supported browsers: Chrome, Chromium, Safari.
+- Unsupported browsers: Firefox and other non-Chromium/non-Safari engines.
 
 ## Quick start
 1. Serve the folder locally. You can run `serve.bat` or any static server.

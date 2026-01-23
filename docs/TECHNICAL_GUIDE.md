@@ -93,6 +93,15 @@ Key fallbacks in assets/app.js:
 - Pointer events -> mouse/touch handlers
 - fetch() worker load -> direct Worker URL
 
+Supported browsers:
+- Chrome
+- Chromium
+- Safari
+
+Unsupported browsers:
+- Firefox
+- Other non-Chromium/non-Safari engines
+
 ## Limits and safeguards
 - RUN_TIMEOUT_MS: 10 seconds (soft interrupt then hard stop)
 - MAX_OUTPUT_BYTES: 2,000,000 bytes
