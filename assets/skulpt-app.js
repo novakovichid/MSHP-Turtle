@@ -2304,97 +2304,96 @@ async function runActiveFile() {
     showGuard(true);
     return;
   }
-  return;
-}
-// cancelStepSession(); // Removed
-clearEditorLineHighlight();
-const entryName = MAIN_FILE;
 
-const file = getFileByName(entryName);
-if (!file) {
-  showToast("Нет main.py.");
-  return;
-}
-if (state.activeFile !== MAIN_FILE) {
-  setActiveFile(MAIN_FILE);
-}
-clearEditorLineHighlight();
-const files = getCurrentFiles();
-const usesTurtle = updateTurtleVisibilityForRun(files);
-clearConsole();
-clearTurtleCanvas();
-updateRunStatus("running");
+  // cancelStepSession(); // Removed
+  clearEditorLineHighlight();
+  const entryName = MAIN_FILE;
 
-state.stdinQueue = [];
-state.stdinWaiting = false;
-state.stdinResolver = null;
+  const file = getFileByName(entryName);
+  if (!file) {
+    showToast("Нет main.py.");
+    return;
+  }
+  if (state.activeFile !== MAIN_FILE) {
+    setActiveFile(MAIN_FILE);
+  }
+  clearEditorLineHighlight();
+  const files = getCurrentFiles();
+  const usesTurtle = updateTurtleVisibilityForRun(files);
+  clearConsole();
+  clearTurtleCanvas();
+  updateRunStatus("running");
 
-const assets = state.mode === "project" ? await loadAssets() : [];
+  state.stdinQueue = [];
+  state.stdinWaiting = false;
+  state.stdinResolver = null;
 
-try {
-  configureSkulptRuntime(files, assets);
-} catch (error) {
-  appendConsole(`\n${formatSkulptError(error)}\n`, true);
-  hardStop("error");
-  return;
-}
-const runToken = state.runToken + 1;
-state.runToken = runToken;
-els.stopBtn.disabled = false;
-enableConsoleInput(true);
+  const assets = state.mode === "project" ? await loadAssets() : [];
 
-if (state.runTimeout) {
-  clearTimeout(state.runTimeout);
-}
-state.runTimeout = setTimeout(() => {
-  softInterrupt("Time limit exceeded.");
-  state.runToken += 1;
-  hardStop("error");
-}, CONFIG.RUN_TIMEOUT_MS + 200);
-
-try {
   try {
-    await Sk.misceval.asyncToPromise(() =>
-      Sk.importMainWithBody("__cleanup__", false, MODULE_CLEANUP_CODE, true)
-    );
+    configureSkulptRuntime(files, assets);
   } catch (error) {
-    // Ignore cleanup failures and proceed with execution.
-  }
-  if (usesTurtle) {
-    try {
-      await Sk.misceval.asyncToPromise(() =>
-        Sk.importMainWithBody("__turtle_patch__", false, TURTLE_PATCH_CODE, true)
-      );
-    } catch (error) {
-      // Ignore patch failures and proceed with execution.
-    }
-  }
-  await Sk.misceval.asyncToPromise(() =>
-    Sk.importMainWithBody("__main__", false, String(file.content || ""), true)
-  );
-  if (state.runToken !== runToken) {
+    appendConsole(`\n${formatSkulptError(error)}\n`, true);
+    hardStop("error");
     return;
   }
-  updateRunStatus("done");
-} catch (error) {
-  if (state.runToken !== runToken) {
-    return;
-  }
-  appendConsole(`\n${formatSkulptError(error)}\n`, true);
-  hardStop("error");
-} finally {
-  if (state.runToken === runToken) {
-    enableConsoleInput(false);
-    els.stopBtn.disabled = true;
-    state.stdinResolver = null;
-    state.stdinWaiting = false;
-    state.stdinQueue = [];
-  }
+  const runToken = state.runToken + 1;
+  state.runToken = runToken;
+  els.stopBtn.disabled = false;
+  enableConsoleInput(true);
+
   if (state.runTimeout) {
     clearTimeout(state.runTimeout);
-    state.runTimeout = null;
   }
-}
+  state.runTimeout = setTimeout(() => {
+    softInterrupt("Time limit exceeded.");
+    state.runToken += 1;
+    hardStop("error");
+  }, CONFIG.RUN_TIMEOUT_MS + 200);
+
+  try {
+    try {
+      await Sk.misceval.asyncToPromise(() =>
+        Sk.importMainWithBody("__cleanup__", false, MODULE_CLEANUP_CODE, true)
+      );
+    } catch (error) {
+      // Ignore cleanup failures and proceed with execution.
+    }
+    if (usesTurtle) {
+      try {
+        await Sk.misceval.asyncToPromise(() =>
+          Sk.importMainWithBody("__turtle_patch__", false, TURTLE_PATCH_CODE, true)
+        );
+      } catch (error) {
+        // Ignore patch failures and proceed with execution.
+      }
+    }
+    await Sk.misceval.asyncToPromise(() =>
+      Sk.importMainWithBody("__main__", false, String(file.content || ""), true)
+    );
+    if (state.runToken !== runToken) {
+      return;
+    }
+    updateRunStatus("done");
+  } catch (error) {
+    if (state.runToken !== runToken) {
+      return;
+    }
+    appendConsole(`\n${formatSkulptError(error)}\n`, true);
+    hardStop("error");
+  } finally {
+    if (state.runToken === runToken) {
+      enableConsoleInput(false);
+      els.stopBtn.disabled = true;
+      state.stdinResolver = null;
+      state.stdinWaiting = false;
+      state.stdinQueue = [];
+    }
+    if (state.runTimeout) {
+      clearTimeout(state.runTimeout);
+      state.runTimeout = null;
+    }
+  }
 }
 
 // function createStepDebugger etc. removed and archived to archive/step-execution.js
