@@ -1966,6 +1966,19 @@ function configureSkulptRuntime(files, assets, options = {}) {
   const debugSession = options.debugger || null;
   const enableDebugging = Boolean(debugSession);
   Sk.inBrowser = false;
+  if (!Sk.asserts) {
+    Sk.asserts = {
+      assert: () => true,
+      fail: () => {}
+    };
+  } else {
+    if (typeof Sk.asserts.assert !== "function") {
+      Sk.asserts.assert = () => true;
+    }
+    if (typeof Sk.asserts.fail !== "function") {
+      Sk.asserts.fail = () => {};
+    }
+  }
   Sk.configure({
     output: (text) => appendConsole(text, false),
     read: skulptRead,
