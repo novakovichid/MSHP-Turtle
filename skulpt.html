@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'" />
-  <title>MSHP-IDE (Skulpt) - Web IDE Python</title>
+  <title>??????.?????? - Web IDE Python</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E🐢%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="assets/skulpt-styles.css" />
 </head>
@@ -30,7 +30,6 @@
         <p>Многофайловые проекты, ввод в консоли, turtle canvas и неизменяемые ссылки. Без сервера. Без аккаунтов.</p>
         <div class="hero-actions">
           <button id="new-project" class="btn primary">Новый проект</button>
-          <a class="btn ghost" href="index.html#/">Main version</a>
         </div>
       </div>
       <div class="hero-card">
@@ -56,7 +55,7 @@ print("Привет,", name)</pre>
       <a id="home-link" class="brand brand-link" href="#/" title="На главную">
         <div class="logo">MSHP</div>
         <div>
-          <div class="brand-title">MSHP-IDE (Skulpt)</div>
+          <div class="brand-title">??????.??????</div>
           <div class="brand-sub">Web IDE Python</div>
         </div>
       </a>
@@ -71,7 +70,6 @@ print("Привет,", name)</pre>
         <button id="export-btn" class="btn ghost">Экспорт</button>
         <button id="remix-btn" class="btn ghost">Ремикс</button>
         <button id="reset-btn" class="btn ghost">Сброс</button>
-        <a class="btn ghost" href="index.html#/">Main version</a>
       </div>
 
       <div class="top-right">
@@ -81,7 +79,7 @@ print("Привет,", name)</pre>
 
     <div id="snapshot-banner" class="snapshot-banner hidden">Общий снимок. Ваши правки локальны до «Ремикса».</div>
 
-    <section class="workspace">
+    <section class="workspace no-turtle">
       <aside id="sidebar" class="sidebar">
         <div class="panel">
           <div class="panel-header">
@@ -112,6 +110,7 @@ print("Привет,", name)</pre>
         <div class="editor-toolbar">
           <div class="editor-actions">
             <button id="run-btn" class="btn primary">Запуск</button>
+            <button id="step-btn" class="btn ghost">Построчно</button>
             <button id="stop-btn" class="btn danger" disabled>Стоп</button>
             <div id="run-status" class="run-status">Ожидание</div>
           </div>
@@ -144,7 +143,7 @@ print("Привет,", name)</pre>
         </div>
       </section>
 
-      <section class="turtle-pane">
+      <section class="turtle-pane hidden">
         <div class="panel-header turtle-header">
           <div class="panel-title">Черепаха</div>
           <div class="turtle-controls">
@@ -162,6 +161,7 @@ print("Привет,", name)</pre>
 
   <script src="vendor/skulpt/skulpt-dist-master/skulpt.min.js"></script>
   <script src="vendor/skulpt/skulpt-dist-master/skulpt-stdlib.js"></script>
+  <script src="vendor/skulpt/skulpt-dist-master/debugger.js"></script>
   <script type="module" src="assets/skulpt-app.js"></script>
 </body>
 </html>

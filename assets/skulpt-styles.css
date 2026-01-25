@@ -55,6 +55,7 @@ body {
   background: radial-gradient(circle at top, #d8e9ff 0%, var(--bg) 45%, #f7fbff 100%);
   color: var(--text);
   overflow: hidden;
+  min-height: 100dvh;
 }
 
 .ambient {
@@ -82,6 +83,7 @@ body {
   position: relative;
   z-index: 1;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -246,10 +248,23 @@ body {
   flex: 1;
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr) 420px;
-  grid-template-rows: 1fr 200px;
+  grid-template-rows: minmax(0, 1fr) 200px;
   gap: 16px;
   padding: 16px 20px 20px;
   overflow: hidden;
+  min-height: 0;
+}
+
+.workspace.no-turtle {
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.workspace.no-turtle .turtle-pane {
+  display: none;
+}
+
+.workspace.no-turtle .console-pane {
+  grid-column: 2 / 3;
 }
 
 .sidebar {
@@ -258,6 +273,7 @@ body {
   gap: 16px;
   overflow: hidden;
   grid-row: 1 / 3;
+  min-height: 0;
 }
 
 .panel {
@@ -293,8 +309,11 @@ body {
 .panel-actions-files {
   flex: 1 1 auto;
   min-width: 0;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 6px 8px;
+  justify-content: end;
+  align-items: center;
 }
 
 .panel-actions-files .btn.small {
@@ -344,6 +363,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .editor-wrap {
@@ -503,6 +523,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .run-status {
@@ -556,6 +577,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .turtle-header {
@@ -816,6 +838,15 @@ body {
 
   .sidebar {
     grid-row: 1 / 4;
+  }
+
+  .workspace.no-turtle {
+    grid-template-columns: 220px 1fr;
+    grid-template-rows: minmax(0, 1fr) 200px;
+  }
+
+  .workspace.no-turtle .console-pane {
+    grid-row: 2 / 3;
   }
 }
 

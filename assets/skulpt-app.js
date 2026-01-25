@@ -1,7 +1,7 @@
 import { gzipSync, gunzipSync } from "./skulpt-fflate.esm.js";
 
 const CONFIG = {
-  RUN_TIMEOUT_MS: 10000,
+  RUN_TIMEOUT_MS: 60000,
   MAX_OUTPUT_BYTES: 2000000,
   MAX_FILES: 30,
   MAX_TOTAL_TEXT_BYTES: 250000,
@@ -103,6 +103,9 @@ const state = {
   stdinQueue: [],
   stdinWaiting: false,
   runTimeout: null,
+  stepSession: null,
+  turtleVisible: false,
+  turtleUsedLastRun: false,
   outputBytes: 0,
   saveTimer: null,
   draftTimer: null,
@@ -131,6 +134,7 @@ const els = {
   projectMode: document.getElementById("project-mode"),
   saveIndicator: document.getElementById("save-indicator"),
   runBtn: document.getElementById("run-btn"),
+  stepBtn: document.getElementById("step-btn"),
   stopBtn: document.getElementById("stop-btn"),
   clearBtn: document.getElementById("clear-btn"),
   shareBtn: document.getElementById("share-btn"),
@@ -157,6 +161,8 @@ const els = {
   consoleInput: document.getElementById("console-input"),
   consoleSend: document.getElementById("console-send"),
   runStatus: document.getElementById("run-status"),
+  workspace: document.querySelector(".workspace"),
+  turtlePane: document.querySelector(".turtle-pane"),
   turtleCanvas: document.getElementById("turtle-canvas"),
   turtleClear: document.getElementById("turtle-clear")
 };
@@ -231,6 +237,7 @@ init();
 async function init() {
   showGuard(true);
   bindUi();
+  setTurtlePaneVisible(false);
   state.db = await openDb();
   if (!state.db) {
     showToast("Storage fallback: changes will not persist in this browser.");
@@ -249,6 +256,9 @@ function bindUi() {
   els.clearRecent.addEventListener("click", clearRecentProjects);
 
   els.runBtn.addEventListener("click", runActiveFile);
+  if (els.stepBtn) {
+    els.stepBtn.addEventListener("click", stepRun);
+  }
   els.stopBtn.addEventListener("click", stopRun);
   els.clearBtn.addEventListener("click", clearConsole);
   els.shareBtn.addEventListener("click", shareProject);
@@ -842,14 +852,27 @@ function escapeHtml(value) {
 function wrapToken(value, type) {
   return `<span class="token ${type}">${value}</span>`;
 }
+function getDefaultModuleName() {
+  const files = getCurrentFiles();
+  const existing = new Set(files.map((file) => String(file.name || "").toLowerCase()));
+  let index = 1;
+  let candidate = `module${index}.py`;
+  while (existing.has(candidate)) {
+    index += 1;
+    candidate = `module${index}.py`;
+  }
+  return candidate;
+}
 async function createFile() {
   if (state.embed.readonly) {
     showToast("Режим только чтение.");
     return;
   }
+  const defaultName = getDefaultModuleName();
   const name = await promptModal({
     title: "Создать модуль",
-    placeholder: "main.py",
+    placeholder: defaultName,
+    fallbackValue: defaultName,
     confirmText: "Создать"
   });
   if (!name) {
@@ -1827,7 +1850,7 @@ function formatSkulptError(error) {
 function initSkulpt() {
   if (typeof window === "undefined" || typeof window.Sk === "undefined") {
     state.runtimeBlocked = true;
-    setGuardMessage("Skulpt не загружен", "Проверьте подключение библиотек Skulpt.");
+    setGuardMessage("Среда не загружена", "Проверьте подключение библиотек.");
     return;
   }
   state.runtimeReady = true;
@@ -1840,19 +1863,21 @@ function getTurtleCanvasSize() {
     return { width: TURTLE_CANVAS_WIDTH, height: TURTLE_CANVAS_HEIGHT };
   }
   const rect = els.turtleCanvas.getBoundingClientRect();
-  const width = Math.round(rect.width) || TURTLE_CANVAS_WIDTH;
-  const height = Math.round(rect.height) || TURTLE_CANVAS_HEIGHT;
+  const width = Math.round(els.turtleCanvas.clientWidth || rect.width) || TURTLE_CANVAS_WIDTH;
+  const height = Math.round(els.turtleCanvas.clientHeight || rect.height) || TURTLE_CANVAS_HEIGHT;
   return {
     width: Math.max(1, width),
     height: Math.max(1, height)
   };
 }
 
-function configureSkulptRuntime(files, assets) {
+function configureSkulptRuntime(files, assets, options = {}) {
   state.skulptFiles = buildSkulptFileMap(files);
   state.skulptAssets = buildSkulptAssetMap(assets);
   const turtleAssets = setSkulptTurtleAssets(assets);
   const turtleSize = getTurtleCanvasSize();
+  const debugSession = options.debugger || null;
+  const enableDebugging = Boolean(debugSession);
   Sk.inBrowser = false;
   Sk.configure({
     output: (text) => appendConsole(text, false),
@@ -1861,7 +1886,16 @@ function configureSkulptRuntime(files, assets) {
     inputfunTakesPrompt: true,
     execLimit: CONFIG.RUN_TIMEOUT_MS,
     yieldLimit: CONFIG.RUN_TIMEOUT_MS,
-    syspath: ["/project"]
+    syspath: ["/project"],
+    debugging: enableDebugging,
+    breakpoints: enableDebugging
+      ? (filename, lineno, colno) => {
+          if (filename === "__cleanup__" || filename === "__turtle_patch__") {
+            return false;
+          }
+          return debugSession.check_breakpoints(filename, lineno, colno);
+        }
+      : undefined
   });
   Sk.execLimit = CONFIG.RUN_TIMEOUT_MS;
   Sk.execStart = Date.now();
@@ -2100,6 +2134,24 @@ for name, module in list(sys.modules.items()):
         sys.modules.pop(name, None)
 `;
 
+const TURTLE_PATCH_CODE = `
+try:
+    import turtle as _t
+    def _mshp_addshape(self, *args, **kwargs):
+        try:
+            if hasattr(self, "register_shape"):
+                return self.register_shape(*args, **kwargs)
+        except Exception:
+            pass
+        try:
+            return _t.register_shape(*args, **kwargs)
+        except Exception:
+            return None
+    _t.Screen.addshape = _mshp_addshape
+except Exception:
+    pass
+`;
+
 function getActiveTabName() {
   if (!els.fileTabs) {
     return null;
@@ -2111,6 +2163,33 @@ function getActiveTabName() {
   return tab ? tab.textContent : null;
 }
 
+const TURTLE_IMPORT_RE = /(^|\n)\s*(from\s+turtle\s+import\b|import\s+[^\n#]*\bturtle\b)/i;
+
+function detectTurtleUsage(files) {
+  if (!files || !files.length) {
+    return false;
+  }
+  return files.some((file) => TURTLE_IMPORT_RE.test(String(file.content ?? "")));
+}
+
+function setTurtlePaneVisible(visible) {
+  const nextVisible = Boolean(visible);
+  state.turtleVisible = nextVisible;
+  if (els.turtlePane) {
+    els.turtlePane.classList.toggle("hidden", !nextVisible);
+  }
+  if (els.workspace) {
+    els.workspace.classList.toggle("no-turtle", !nextVisible);
+  }
+}
+
+function updateTurtleVisibilityForRun(files) {
+  const usesTurtle = detectTurtleUsage(files);
+  state.turtleUsedLastRun = usesTurtle;
+  setTurtlePaneVisible(usesTurtle);
+  return usesTurtle;
+}
+
 async function runActiveFile() {
   if (state.runtimeBlocked) {
     showGuard(true);
@@ -2120,12 +2199,15 @@ async function runActiveFile() {
     showGuard(true);
     return;
   }
+  cancelStepSession();
   const entryName = MAIN_FILE;
   const file = getFileByName(entryName);
   if (!file) {
     showToast("Нет main.py.");
     return;
   }
+  const files = getCurrentFiles();
+  const usesTurtle = updateTurtleVisibilityForRun(files);
   clearConsole();
   clearTurtleCanvas();
   updateRunStatus("running");
@@ -2134,7 +2216,6 @@ async function runActiveFile() {
   state.stdinWaiting = false;
   state.stdinResolver = null;
 
-  const files = getCurrentFiles();
   const assets = state.mode === "project" ? await loadAssets() : [];
 
   configureSkulptRuntime(files, assets);
@@ -2159,6 +2240,15 @@ async function runActiveFile() {
       );
     } catch (error) {
       // Ignore cleanup failures and proceed with execution.
+    }
+    if (usesTurtle) {
+      try {
+        await Sk.misceval.asyncToPromise(() =>
+          Sk.importMainWithBody("__turtle_patch__", false, TURTLE_PATCH_CODE, true)
+        );
+      } catch (error) {
+        // Ignore patch failures and proceed with execution.
+      }
     }
     await Sk.misceval.asyncToPromise(() =>
       Sk.importMainWithBody("__main__", false, String(file.content || ""), true)
@@ -2188,8 +2278,183 @@ async function runActiveFile() {
   }
 }
 
+function createStepDebugger(sourceLines, runToken) {
+  const debugSession = new Sk.Debugger("__main__", {
+    print: (text) => appendConsole(String(text), false),
+    get_source_line: (lineno) => sourceLines[lineno] || ""
+  });
+  const originalSuccess = debugSession.success.bind(debugSession);
+  debugSession.success = (result) => {
+    if (state.runToken !== runToken) {
+      return;
+    }
+    originalSuccess(result);
+    if (debugSession.suspension_stack.length === 0) {
+      finishStepSession(runToken, "done");
+    }
+  };
+  debugSession.error = (error) => {
+    if (state.runToken !== runToken) {
+      return;
+    }
+    appendConsole(`\n${formatSkulptError(error)}\n`, true);
+    finishStepSession(runToken, "error");
+  };
+  return debugSession;
+}
+
+async function stepRun() {
+  if (state.runtimeBlocked) {
+    showGuard(true);
+    return;
+  }
+  if (!state.runtimeReady) {
+    showGuard(true);
+    return;
+  }
+  if (state.stepSession && state.stepSession.debugger) {
+    resumeStepSession();
+    return;
+  }
+  const entryName = MAIN_FILE;
+  const file = getFileByName(entryName);
+  if (!file) {
+    showToast("Нет main.py.");
+    return;
+  }
+  if (!els.stopBtn.disabled) {
+    hardStop("stopped");
+  }
+  const files = getCurrentFiles();
+  const usesTurtle = updateTurtleVisibilityForRun(files);
+  clearConsole();
+  clearTurtleCanvas();
+  updateRunStatus("running");
+
+  state.stdinQueue = [];
+  state.stdinWaiting = false;
+  state.stdinResolver = null;
+
+  const assets = state.mode === "project" ? await loadAssets() : [];
+  const runToken = state.runToken + 1;
+  state.runToken = runToken;
+
+  const sourceLines = String(file.content || "").split(/\r?\n/);
+  const debugSession = createStepDebugger(sourceLines, runToken);
+  state.stepSession = { debugger: debugSession, runToken };
+
+  configureSkulptRuntime(files, assets, { debugger: debugSession });
+  els.stopBtn.disabled = false;
+  enableConsoleInput(true);
+
+  if (state.runTimeout) {
+    clearTimeout(state.runTimeout);
+  }
+  state.runTimeout = setTimeout(() => {
+    softInterrupt("Time limit exceeded.");
+    state.runToken += 1;
+    finishStepSession(runToken, "error");
+  }, CONFIG.RUN_TIMEOUT_MS + 200);
+
+  try {
+    try {
+      await Sk.misceval.asyncToPromise(() =>
+        Sk.importMainWithBody("__cleanup__", false, MODULE_CLEANUP_CODE, true)
+      );
+    } catch (error) {
+      // Ignore cleanup failures and proceed with execution.
+    }
+    if (usesTurtle) {
+      try {
+        await Sk.misceval.asyncToPromise(() =>
+          Sk.importMainWithBody("__turtle_patch__", false, TURTLE_PATCH_CODE, true)
+        );
+      } catch (error) {
+        // Ignore patch failures and proceed with execution.
+      }
+    }
+    debugSession.enable_step_mode();
+    debugSession
+      .asyncToPromise(
+        () => Sk.importMainWithBody("__main__", false, String(file.content || ""), true),
+        null,
+        debugSession
+      )
+      .then(() => finishStepSession(runToken, "done"))
+      .catch((error) => {
+        if (state.runToken !== runToken) {
+          return;
+        }
+        appendConsole(`\n${formatSkulptError(error)}\n`, true);
+        finishStepSession(runToken, "error");
+      });
+  } catch (error) {
+    if (state.runToken !== runToken) {
+      return;
+    }
+    appendConsole(`\n${formatSkulptError(error)}\n`, true);
+    finishStepSession(runToken, "error");
+  }
+}
+
+function resumeStepSession() {
+  const session = state.stepSession;
+  if (!session || !session.debugger) {
+    return;
+  }
+  if (state.runToken !== session.runToken) {
+    cancelStepSession();
+    return;
+  }
+  try {
+    session.debugger.resume();
+  } catch (error) {
+    appendConsole(`\n${formatSkulptError(error)}\n`, true);
+    finishStepSession(session.runToken, "error");
+  }
+}
+
+function finishStepSession(runToken, status) {
+  const session = state.stepSession;
+  if (!session || session.runToken !== runToken) {
+    return;
+  }
+  state.stepSession = null;
+  if (state.runTimeout) {
+    clearTimeout(state.runTimeout);
+    state.runTimeout = null;
+  }
+  state.stdinResolver = null;
+  state.stdinWaiting = false;
+  state.stdinQueue = [];
+  enableConsoleInput(false);
+  els.stopBtn.disabled = true;
+  if (status === "done") {
+    updateRunStatus("done");
+  } else {
+    hardStop(status);
+  }
+}
+
+function cancelStepSession() {
+  if (!state.stepSession) {
+    return;
+  }
+  state.stepSession = null;
+  if (state.runTimeout) {
+    clearTimeout(state.runTimeout);
+    state.runTimeout = null;
+  }
+  state.stdinResolver = null;
+  state.stdinWaiting = false;
+  state.stdinQueue = [];
+  enableConsoleInput(false);
+  els.stopBtn.disabled = true;
+}
+
 function stopRun() {
   state.runToken += 1;
+  cancelStepSession();
   softInterrupt("Stopped by user.");
   hardStop("stopped");
 }
@@ -2285,12 +2550,31 @@ function closeModal() {
   els.modal.innerHTML = "";
 }
 
-async function promptModal({ title, placeholder, value, confirmText }) {
+async function promptModal({ title, placeholder, value, confirmText, fallbackValue }) {
   return new Promise((resolve) => {
     const safeTitle = escapeHtml(String(title || ""));
     const safePlaceholder = escapeHtml(String(placeholder || ""));
     const safeValue = escapeHtml(String(value || ""));
     const safeConfirm = escapeHtml(String(confirmText || "OK"));
+    let resolved = false;
+    const finish = (action) => {
+      if (resolved) {
+        return;
+      }
+      resolved = true;
+      if (action === "confirm") {
+        const input = els.modal.querySelector(".modal-input");
+        let valueText = input ? input.value : "";
+        if (!valueText.trim() && fallbackValue !== undefined && fallbackValue !== null) {
+          valueText = String(fallbackValue);
+        }
+        closeModal();
+        resolve(valueText);
+      } else {
+        closeModal();
+        resolve(null);
+      }
+    };
     const html = `
       <div class="modal-card">
         <h3>${safeTitle}</h3>
@@ -2301,17 +2585,23 @@ async function promptModal({ title, placeholder, value, confirmText }) {
         </div>
       </div>
     `;
-    openModal(html, (action) => {
-      if (action === "confirm") {
-        const input = els.modal.querySelector(".modal-input");
-        const valueText = input ? input.value : "";
-        closeModal();
-        resolve(valueText);
-      } else {
-        closeModal();
-        resolve(null);
+    openModal(html, (action) => finish(action));
+    const input = els.modal.querySelector(".modal-input");
+    if (input) {
+      input.focus();
+      if (value) {
+        input.select();
       }
-    });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          finish("confirm");
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          finish("cancel");
+        }
+      });
+    }
   });
 }
 
@@ -2320,6 +2610,25 @@ async function confirmModal({ title, message, confirmText }) {
     const safeTitle = escapeHtml(String(title || ""));
     const safeMessage = escapeHtml(String(message || ""));
     const safeConfirm = escapeHtml(String(confirmText || "Confirm"));
+    let resolved = false;
+    const finish = (action) => {
+      if (resolved) {
+        return;
+      }
+      resolved = true;
+      els.modal.removeEventListener("keydown", onKeyDown);
+      closeModal();
+      resolve(action === "confirm");
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finish("confirm");
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        finish("cancel");
+      }
+    };
     const html = `
       <div class="modal-card">
         <h3>${safeTitle}</h3>
@@ -2330,10 +2639,12 @@ async function confirmModal({ title, message, confirmText }) {
         </div>
       </div>
     `;
-    openModal(html, (action) => {
-      closeModal();
-      resolve(action === "confirm");
-    });
+    openModal(html, (action) => finish(action));
+    const confirmButton = els.modal.querySelector('[data-action="confirm"]');
+    if (confirmButton) {
+      confirmButton.focus();
+    }
+    els.modal.addEventListener("keydown", onKeyDown);
   });
 }
 
