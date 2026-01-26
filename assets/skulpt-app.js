@@ -2127,10 +2127,10 @@ function getSkulptAssetUrl(name) {
   const normalized = normalizeAssetName(name);
   // Сначала проверяем в загруженных ассетах
   let url = state.skulptAssetUrls.get(name) ||
-            state.skulptAssetUrls.get(normalized) ||
-            state.skulptAssetUrls.get(`/project/${normalized}`) ||
-            state.skulptAssetUrls.get(`./${normalized}`) ||
-            null;
+    state.skulptAssetUrls.get(normalized) ||
+    state.skulptAssetUrls.get(`/project/${normalized}`) ||
+    state.skulptAssetUrls.get(`./${normalized}`) ||
+    null;
   if (url) {
     return url;
   }
@@ -2171,6 +2171,8 @@ function getSkulptAssetUrl(name) {
     // Сохраняем в кэш
     state.skulptAssetUrls.set(name, url);
     state.skulptAssetUrls.set(normalized, url);
+    state.skulptAssetUrls.set(`/project/${name}`, url);
+    state.skulptAssetUrls.set(`./${name}`, url);
     state.skulptAssetUrls.set(`/project/${normalized}`, url);
     state.skulptAssetUrls.set(`./${normalized}`, url);
     return url;
@@ -2223,24 +2225,32 @@ function setSkulptTurtleAssets(assets) {
     const normalized = normalizeAssetName(name);
     assetMap[name] = url;
     assetMap[normalized] = url;
+    assetMap[`/project/${name}`] = url;
+    assetMap[`./${name}`] = url;
     assetMap[`/project/${normalized}`] = url;
     assetMap[`./${normalized}`] = url;
     urlMap.set(name, url);
     urlMap.set(normalized, url);
+    urlMap.set(`/project/${name}`, url);
+    urlMap.set(`./${name}`, url);
     urlMap.set(`/project/${normalized}`, url);
     urlMap.set(`./${normalized}`, url);
+    // Также сохраняем по blobId для совместимости, если нужно
+    if (asset.blobId) {
+      urlMap.set(asset.blobId, url);
+    }
   });
   state.skulptAssetUrls = urlMap;
-  // Создаем прокси-объект, который будет искать изображения динамически
+
   return new Proxy(assetMap, {
     get(target, prop) {
-      if (prop in target) {
-        return target[prop];
+      const key = String(prop);
+      if (key in target) {
+        return target[key];
       }
-      // Если свойство не найдено, пытаемся загрузить из файловой системы
-      const url = getSkulptAssetUrl(String(prop));
+      const url = getSkulptAssetUrl(key);
       if (url) {
-        target[prop] = url;
+        target[key] = url;
         return url;
       }
       return undefined;
@@ -2404,7 +2414,6 @@ async function runActiveFile() {
   state.stdinResolver = null;
 
   const assets = state.mode === "project" ? await loadAssets() : [];
-  prepareSkulptAssetUrls(assets);
 
   try {
     configureSkulptRuntime(files, assets);
@@ -2551,24 +2560,6 @@ async function loadAssets() {
   return assets;
 }
 
-function prepareSkulptAssetUrls(assets) {
-  revokeSkulptAssetUrls();
-  if (!Array.isArray(assets)) {
-    return;
-  }
-  for (const asset of assets) {
-    const ext = asset.name.toLowerCase().match(/\.[^.]+$/)?.[0] || "";
-    if (IMAGE_ASSET_EXTENSIONS.has(ext)) {
-      try {
-        const blob = new Blob([asset.data], { type: asset.mime });
-        const url = URL.createObjectURL(blob);
-        state.skulptAssetUrls.set(asset.blobId, url);
-      } catch (error) {
-        console.error(`Failed to create URL for asset ${asset.name}:`, error);
-      }
-    }
-  }
-}
 
 function revokeSkulptAssetUrls() {
   state.skulptAssetUrls.forEach((url) => {
