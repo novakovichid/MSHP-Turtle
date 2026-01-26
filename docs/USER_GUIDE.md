@@ -1,89 +1,87 @@
-# User Guide
+# Руководство пользователя
 
-## Overview
-MSHP-IDE is a static, browser-only Python IDE. It runs CPython via Pyodide in a
-Web Worker and provides a file editor, console input/output, and a turtle canvas.
-All data stays in the browser.
+## Обзор
+MSHP-IDE — это статическая среда разработки Python, работающая полностью в браузере. Она запускает CPython через Pyodide в Web Worker и предоставляет редактор файлов, консоль ввода/вывода и холст для графики Turtle. Все данные остаются в вашем браузере.
 
-## Requirements
-- A modern browser with WebAssembly and Web Workers.
-- A local or hosted static server (file:// URLs are not supported).
-- Supported browsers: Chrome, Chromium, Safari.
-- Unsupported browsers: Firefox and other non-Chromium/non-Safari engines.
+## Требования
+- Современный браузер с поддержкой WebAssembly и Web Workers.
+- Локальный или удаленный статический сервер (протокол `file://` не поддерживается).
+- Поддерживаемые браузеры: Chrome, Chromium, Safari.
+- Неподдерживаемые браузеры: Firefox и другие движки, отличные от Chromium/Safari.
 
-## Quick start
-1. Serve the folder locally. You can run `serve.bat` or any static server.
-2. Open the site in your browser.
-3. Click "New project" and press Run.
+## Быстрый старт
+1. Запустите локальный сервер. Можно использовать `serve.bat` или любой статический сервер.
+2. Откройте сайт в браузере.
+3. Нажмите "Новый проект" (New project) и кнопку "Запуск" (Run).
 
-## Interface tour
-- Landing page: create a new project or open a recent one.
-- IDE view:
-  - Files panel (left): create, rename, duplicate, delete files.
-  - Editor (center): Python code with syntax highlighting.
-  - Console (bottom right): stdout/stderr and input.
-  - Turtle canvas (top right): turtle drawing and input.
+## Обзор интерфейса
+- **Главная страница**: создание нового проекта или открытие недавних.
+- **Вид IDE**:
+  - **Панель файлов (слева)**: создание, переименование, дублирование и удаление файлов.
+  - **Редактор (в центре)**: код на Python с подсветкой синтаксиса.
+  - **Консоль (снизу справа)**: вывод текста (stdout/stderr) и ввод данных.
+  - **Холст Turtle (сверху справа)**: графический вывод и ввод для черепашки.
 
-## Projects and files
-- Each project contains multiple .py files plus optional assets.
-- The active file is the entry point when you click Run.
-- File name rules:
-  - Allowed characters: A-Z, a-z, 0-9, dot, dash, underscore.
-  - Example: `main.py`, `utils.py`.
-- Limits:
-  - Max files: 30
-  - Max file size: 50 KB per file
-  - Max total text size: 250 KB
+## Проекты и файлы
+- Каждый проект содержит несколько файлов `.py` и необязательные ресурсы (assets).
+- Активный файл является точкой входа при нажатии кнопки "Запуск".
+- Правила именования файлов:
+  - Допустимые символы: A-Z, a-z, 0-9, точка, тире, подчеркивание.
+  - Пример: `main.py`, `utils.py`.
+- Лимиты:
+  - Макс. количество файлов: 30.
+  - Макс. размер файла: 50 КБ.
+  - Макс. общий размер текста: 250 КБ.
 
-## Assets
-- Assets are uploaded via the Assets panel and stored in IndexedDB.
-- Assets are available to Python code as files in the project directory.
-- Snapshots do not include assets. Use Export if you need to share assets.
+## Ресурсы (Assets)
+- Ресурсы загружаются через панель Assets и сохраняются в IndexedDB.
+- Они доступны в коде Python как файлы в директории проекта.
+- Снимки (Snapshots) не включают ресурсы. Используйте "Экспорт", если нужно поделиться проектом с ресурсами.
 
-## Running code
-- Run executes the active file as __main__.
-- Stop interrupts execution by restarting the worker.
-- Output is shown in the console. Errors are highlighted.
-- Input (`input()`) is supported through the console input field.
-- Run safeguards:
-  - Wall-time timeout: 10 seconds
-  - Max output size: 2 MB (output is truncated after that)
+## Выполнение кода
+- "Запуск" (Run) выполняет активный файл как `__main__`.
+- "Стоп" (Stop) прерывает выполнение путем перезапуска воркера.
+- Вывод отображается в консоли. Ошибки подсвечиваются.
+- Ввод данных (`input()`) поддерживается через поле ввода в консоли.
+- Защитные механизмы:
+  - Таймаут выполнения: 10 секунд (в версии Pyodide) / 60 секунд (в версии Skulpt).
+  - Макс. размер вывода: 2 МБ (после этого вывод обрезается).
 
-## Turtle canvas
-- Turtle drawing appears in the turtle panel.
-- Focus the canvas to capture keyboard input for turtle events.
-- You can drag the turtle with pointer or touch input.
-- Use the speed control slider to adjust animation speed.
-- Click "Clear" to reset the canvas.
+## Холст Turtle
+- Графика Turtle отображается в соответствующей панели.
+- Нажмите на холст, чтобы он перехватывал нажатия клавиш для событий Turtle.
+- Черепашку можно перетаскивать мышью или касанием.
+- Используйте ползунок скорости для настройки анимации.
+- Нажмите "Очистить" (Clear), чтобы сбросить холст.
 
-## Share links (snapshots)
-- Share creates an immutable snapshot URL for the current project.
-- The snapshot is read-only by default.
-- You can still edit locally; edits are stored as a draft overlay.
-- Remix creates a new editable project from a snapshot.
-- Reset discards local draft edits and restores the snapshot baseline.
-- Share limits:
-  - No assets (share only includes code)
-  - Same size limits as above
+## Ссылки для шеринга (Снимки)
+- "Поделиться" (Share) создает неизменяемую ссылку-снимок текущего проекта.
+- Снимок по умолчанию доступен только для чтения.
+- Вы можете редактировать его локально; правки сохраняются как черновик (draft).
+- "Ремикс" (Remix) создает новый редактируемый проект на основе снимка.
+- "Сброс" (Reset) удаляет локальные правки и возвращает снимок к исходному состоянию.
+- Ограничения шеринга:
+  - Без ресурсов (только код).
+  - Те же лимиты на размер, что указаны выше.
 
-## Export
-- Export offers JSON or ZIP formats.
-- JSON includes files and assets encoded in base64.
-- ZIP includes files and assets as a standard archive.
+## Экспорт
+- Доступны форматы JSON и ZIP.
+- JSON включает файлы и ресурсы, закодированные в base64.
+- ZIP включает файлы и ресурсы в виде стандартного архива.
 
-## Embed mode
-- Use `#/embed` with query parameters:
-  - display=side|output|toggle
-  - mode=runOnly|consoleOnly|allowEither
-  - autorun=1|0
-  - readonly=1|0
+## Режим встраивания (Embed)
+- Используйте `#/embed` с параметрами запроса:
+  - `display=side|output|toggle`
+  - `mode=runOnly|consoleOnly|allowEither`
+  - `autorun=1|0`
+  - `readonly=1|0`
 
-## Storage and privacy
-- Projects and assets are stored in IndexedDB.
-- In private browsing modes, storage may be unavailable or non-persistent.
-- The app falls back to in-memory storage when IndexedDB is blocked.
+## Хранение и конфиденциальность
+- Проекты и ресурсы сохраняются в IndexedDB вашего браузера.
+- В режиме инкогнито хранилище может быть недоступно или не сохраняться после закрытия вкладки.
+- При блокировке IndexedDB приложение переходит на хранение в оперативной памяти.
 
-## Troubleshooting
-- If the app is stuck on loading, refresh once to allow COI setup.
-- If sharing fails, reduce the project size or remove large files.
-- If input is ignored, make sure the console input is enabled and focused.
+## Решение проблем
+- Если приложение зависло на загрузке, обновите страницу один раз для настройки COI.
+- Если шеринг не работает, уменьшите размер проекта или удалите большие файлы.
+- Если ввод данных игнорируется, убедитесь, что поле ввода в консоли активно и в фокусе.

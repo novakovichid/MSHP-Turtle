@@ -1,25 +1,25 @@
 # MSHP-IDE
 
-Project navigation and entry points.
+Навигация по проекту и точки входа.
 
-## Guides
-- User guide: `docs/USER_GUIDE.md`
-- Technical guide: `docs/TECHNICAL_GUIDE.md`
+## Руководства
+- Руководство пользователя: `docs/USER_GUIDE.md`
+- Техническое руководство: `docs/TECHNICAL_GUIDE.md`
 
-## Main entry points
-- App shell: `index.html`
-- UI logic: `assets/app.js`
-- Worker runtime: `assets/worker.js`
-- Styles: `assets/styles.css`
+## Основные точки входа
+- Контейнер приложения: `index.html`
+- Логика интерфейса (Pyodide): `assets/app.js`
+- Воркер выполнения: `assets/worker.js`
+- Стили (Pyodide): `assets/styles.css`
 - Service worker (COI): `sw.js`
-- Skulpt shell: `skulpt.html`
-- Skulpt UI logic: `assets/skulpt-app.js`
-- Skulpt styles: `assets/skulpt-styles.css`
+- Контейнер Skulpt: `skulpt.html`
+- Логика интерфейса (Skulpt): `assets/skulpt-app.js`
+- Стили (Skulpt): `assets/skulpt-styles.css`
 
-## Runtime and assets
-- Pyodide runtime: `pyodide-0.29.1/pyodide/`
-- Skulpt runtime: `vendor/skulpt/skulpt-dist-master/`
-- Fonts: `assets/fonts/`
+## Среда выполнения и ресурсы
+- Среда Pyodide: `pyodide-0.29.1/pyodide/`
+- Среда Skulpt: `vendor/skulpt/skulpt-dist-master/`
+- Шрифты: `assets/fonts/`
 
-## Utilities
-- Local server helper: `serve.bat`
+## Утилиты
+- Вспомогательный скрипт для локального сервера: `serve.bat`

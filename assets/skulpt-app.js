@@ -1995,7 +1995,7 @@ function configureSkulptRuntime(files, assets, options = {}) {
     inputfun: skulptInput,
     inputfunTakesPrompt: true,
     execLimit: CONFIG.RUN_TIMEOUT_MS,
-    yieldLimit: CONFIG.RUN_TIMEOUT_MS,
+    yieldLimit: 100,
     syspath: ["/project"],
     debugging: false,
     breakpoints: undefined

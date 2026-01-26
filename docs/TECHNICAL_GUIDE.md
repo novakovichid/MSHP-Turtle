@@ -1,135 +1,130 @@
-# Technical Guide
+# Техническое руководство
 
-## Overview
-MSHP-IDE is a static SPA that runs Python via Pyodide in a Web Worker. The
-main thread handles UI, storage, and turtle rendering. A service worker adds
-COOP/COEP headers for optional cross-origin isolation.
+## Обзор
+MSHP-IDE — это статическое одностраничное приложение (SPA), которое запускает Python через Pyodide в Web Worker. Основной поток обрабатывает интерфейс, хранилище и отрисовку Turtle. Сервис-воркер добавляет заголовки COOP/COEP для опциональной изоляции cross-origin.
 
-The project also ships a Skulpt-based variant (`skulpt.html`) with a fully
-separate code path and assets.
+Проект также содержит вариант на базе Skulpt (`skulpt.html`) с полностью отдельными путями кода и ресурсами.
 
-## Directory structure
-- index.html: Pyodide SPA shell and CSP
-- skulpt.html: Skulpt SPA shell and CSP
-- assets/app.js: Pyodide UI/runtime logic (router, editor, storage, share)
-- assets/skulpt-app.js: Skulpt UI/runtime logic (independent copy)
-- assets/worker.js: Pyodide runtime worker
-- assets/styles.css: Pyodide styling
-- assets/skulpt-styles.css: Skulpt styling (independent copy)
-- assets/fflate.esm.js: gzip fallback for browsers without CompressionStream
-- assets/skulpt-fflate.esm.js: Skulpt gzip fallback (independent copy)
-- pyodide-0.29.1/pyodide/: self-hosted Pyodide runtime
-- vendor/skulpt/skulpt-dist-master/: Skulpt runtime + stdlib
-- sw.js: COI service worker
+## Структура каталогов
+- `index.html`: Оболочка SPA Pyodide и CSP.
+- `skulpt.html`: Оболочка SPA Skulpt и CSP.
+- `assets/app.js`: Логика интерфейса и выполнения Pyodide (роутер, редактор, хранилище, шеринг).
+- `assets/skulpt-app.js`: Логика интерфейса и выполнения Skulpt (независимая копия).
+- `assets/worker.js`: Воркер выполнения Pyodide.
+- `assets/styles.css`: Стили Pyodide.
+- `assets/skulpt-styles.css`: Стили Skulpt (независимая копия).
+- `assets/fflate.esm.js`: Резервный вариант gzip для браузеров без CompressionStream.
+- `assets/skulpt-fflate.esm.js`: Резервный вариант gzip для Skulpt (независимая копия).
+- `pyodide-0.29.1/pyodide/`: Локальная среда выполнения Pyodide.
+- `vendor/skulpt/skulpt-dist-master/`: Среда выполнения Skulpt и стандартная библиотека.
+- `sw.js`: Сервис-воркер COI.
 
-## Boot flow
-1. index.html loads assets/app.js as a module.
-2. init() binds UI handlers, registers the service worker, and checks runtime
-   support (Worker and WebAssembly).
-3. ensureRuntimeCompatibility() triggers a one-time reload if COI is needed.
-4. IndexedDB is opened; a memory fallback is used if blocked.
-5. A Web Worker is spawned and initialized with Pyodide.
+## Процесс загрузки
+1. `index.html` загружает `assets/app.js` как модуль.
+2. `init()` привязывает обработчики интерфейса, регистрирует сервис-воркер и проверяет поддержку среды (Worker и WebAssembly).
+3. `ensureRuntimeCompatibility()` инициирует разовую перезагрузку, если требуется COI.
+4. Открывается IndexedDB; при блокировке используется резервное хранилище в памяти.
+5. Создается и инициализируется Web Worker с Pyodide.
 
-## Routing
-Hash-based routing supports GitHub Pages:
-- /#/ : landing
-- /#/p/{projectId} : editable project
-- /#/s/{shareId}?p={payload} : snapshot
-- /#/embed : embed view with query settings
+## Роутинг
+Используется роутинг на основе хеша (поддерживается GitHub Pages):
+- `/#/` : главная страница.
+- `/#/p/{projectId}` : редактируемый проект.
+- `/#/s/{shareId}?p={payload}` : неизменяемый снимок.
+- `/#/embed` : режим встраивания с настройками в строке запроса.
 
-## Storage model
-IndexedDB database: mshp-ide (Pyodide)
-IndexedDB database: mshp-ide-skulpt (Skulpt)
-Object stores:
-- projects: { projectId, title, files, assets, lastActiveFile, updatedAt }
-- blobs: { blobId, data }
-- drafts: { key, overlayFiles, deletedFiles, draftLastActiveFile, updatedAt }
-- recent: { key: "recent", list: [projectId...] }
+## Модель хранения
+База данных IndexedDB: `mshp-ide` (Pyodide)
+База данных IndexedDB: `mshp-ide-skulpt` (Skulpt)
+Хранилища объектов:
+- `projects`: `{ projectId, title, files, assets, lastActiveFile, updatedAt }`
+- `blobs`: `{ blobId, data }`
+- `drafts`: `{ key, overlayFiles, deletedFiles, draftLastActiveFile, updatedAt }`
+- `recent`: `{ key: "recent", list: [projectId...] }`
 
-When IndexedDB is unavailable, a Map-based in-memory store is used.
+Если IndexedDB недоступна, используется хранилище в оперативной памяти на базе `Map`.
 
-## Worker runtime
-assets/worker.js:
-- importScripts() loads Pyodide from indexURL.
-- loadPyodide() initializes the runtime.
-- Stdout/stderr are proxied to the main thread.
-- input() is implemented via a main thread queue.
-- Each run resets /project in the Pyodide FS and writes files/assets.
-- Entry point is executed with runpy.run_path(..., run_name="__main__").
+## Воркер выполнения
+`assets/worker.js`:
+- `importScripts()` загружает Pyodide из `indexURL`.
+- `loadPyodide()` инициализирует среду выполнения.
+- Stdout/stderr проксируются в основной поток.
+- `input()` реализован через очередь в основном потоке.
+- Каждый запуск сбрасывает `/project` в файловой системе Pyodide и записывает файлы/ресурсы.
+- Точка входа запускается через `runpy.run_path(..., run_name="__main__")`.
 
-## Turtle pipeline
-- TURTLE_SHIM replaces the standard turtle module in the worker.
-- Turtle events are serialized and posted to the main thread.
-- The main thread renders to a canvas with animation and speed controls.
-- Pointer/touch events are normalized and sent back to the worker.
+## Конвейер Turtle
+- `TURTLE_SHIM` заменяет стандартный модуль `turtle` в воркере.
+- События Turtle сериализуются и отправляются в основной поток.
+- Основной поток отрисовывает графику на холсте (canvas) с управлением скоростью и анимацией.
+- События указателя/касания нормализуются и отправляются обратно в воркер.
 
-## Sharing and snapshots
-- Share serializes project state to JSON and encodes as UTF-8 bytes.
-- Payload compression:
-  - Uses CompressionStream("gzip") when available.
-  - Falls back to gzipSync from fflate for compatibility.
-- Payload encoding: base64url with a prefix:
-  - g.<data> for gzip
-  - u.<data> for uncompressed
-- shareId:
-  - SHA-256 via crypto.subtle when available.
-  - Fallback to FNV-1a based hash when crypto.subtle is missing.
-- Snapshots are immutable; local edits are stored in drafts.
+## Шеринг и снимки
+- При шеринге состояние проекта сериализуется в JSON и кодируется как UTF-8 байты.
+- Сжатие данных:
+  - Используется `CompressionStream("gzip")`, если доступно.
+  - Резервный вариант — `gzipSync` из `fflate`.
+- Кодирование: base64url с префиксом:
+  - `g.<data>` для gzip.
+  - `u.<data>` для обычного текста.
+- `shareId`:
+  - SHA-256 через `crypto.subtle`, если доступно.
+  - Резервный вариант — хеш на основе FNV-1a.
+- Снимки неизменяемы; локальные правки сохраняются в `drafts`.
 
-## CSP and COI
-- CSP (meta tag in index.html) includes:
-  - script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'
-  - worker-src 'self' blob:
-- sw.js injects COOP/COEP/CORP headers for cross-origin isolation.
+## CSP и COI
+- CSP (мета-тег в `index.html`) включает:
+  - `script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'`
+  - `worker-src 'self' blob:`
+- `sw.js` внедряет заголовки COOP/COEP/CORP для изоляции cross-origin.
 
-## Browser compatibility
-Key fallbacks in assets/app.js:
-- TextEncoder/TextDecoder polyfills
-- UUID generation without crypto.randomUUID
-- CompressionStream/DecompressionStream -> fflate gzip
-- crypto.subtle digest -> FNV-1a
-- navigator.clipboard -> document.execCommand
-- IndexedDB -> in-memory Map store
-- Pointer events -> mouse/touch handlers
-- fetch() worker load -> direct Worker URL
+## Совместимость с браузерами
+Резервные механизмы в `assets/app.js`:
+- Полифиллы для TextEncoder/TextDecoder.
+- Генерация UUID без `crypto.randomUUID`.
+- `CompressionStream/DecompressionStream` -> `fflate` gzip.
+- `crypto.subtle digest` -> FNV-1a.
+- `navigator.clipboard` -> `document.execCommand`.
+- IndexedDB -> хранилище `Map` в памяти.
+- Pointer events -> обработчики мыши/касаний.
+- Загрузка воркера через `fetch()` -> прямой URL воркера.
 
-Supported browsers:
+Поддерживаемые браузеры:
 - Chrome
 - Chromium
 - Safari
 
-Unsupported browsers:
+Неподдерживаемые браузеры:
 - Firefox
-- Other non-Chromium/non-Safari engines
+- Другие движки, отличные от Chromium/Safari.
 
-## Limits and safeguards
-- RUN_TIMEOUT_MS: 10 seconds (soft interrupt then hard stop)
-- MAX_OUTPUT_BYTES: 2,000,000 bytes
-- MAX_FILES: 30
-- MAX_SINGLE_FILE_BYTES: 50,000
-- MAX_TOTAL_TEXT_BYTES: 250,000
+## Лимиты и защитные механизмы
+- `RUN_TIMEOUT_MS`: 10 секунд (мягкое прерывание, затем жесткая остановка).
+- `MAX_OUTPUT_BYTES`: 2,000,000 байт.
+- `MAX_FILES`: 30.
+- `MAX_SINGLE_FILE_BYTES`: 50,000 байт.
+- `MAX_TOTAL_TEXT_BYTES`: 250,000 байт.
 
-## Updating Pyodide
-1. Replace pyodide-0.29.1/pyodide with a new version.
-2. Update the indexURL in assets/app.js (worker init).
-3. Ensure pyodide.js and pyodide.asm.wasm match the new version.
+## Обновление Pyodide
+1. Замените содержимое `pyodide-0.29.1/pyodide` на новую версию.
+2. Обновите `indexURL` в `assets/app.js` (инициализация воркера).
+3. Убедитесь, что `pyodide.js` и `pyodide.asm.wasm` соответствуют новой версии.
 
-## Swapping Pyodide and Skulpt pages (AI agent instructions)
-If the Skulpt experiment should become the default version:
-1. Make a backup copy of `index.html` (optional).
-2. Replace `index.html` with a copy of `skulpt.html`.
-3. Ensure the topbar/landing links still point to the alternate page.
-4. Keep both `assets/app.js` and `assets/skulpt-app.js` intact so rollback is easy.
+## Переключение между страницами Pyodide и Skulpt (инструкции для ИИ-агента)
+Если версия на Skulpt должна стать основной:
+1. Создайте резервную копию `index.html` (опционально).
+2. Замените `index.html` копией `skulpt.html`.
+3. Убедитесь, что ссылки в шапке/на главной по-прежнему ведут на альтернативную страницу.
+4. Оставьте `assets/app.js` и `assets/skulpt-app.js` нетронутыми для легкого отката.
 
-To switch back to Pyodide, restore the original `index.html` (or copy it back
-from version control) and keep `skulpt.html` as the alternate page.
+Чтобы вернуться на Pyodide, восстановите оригинальный `index.html`.
 
-## Local development
-- Use a static server (serve.bat or any HTTP server).
-- No build step is required.
-- Service worker can be disabled by removing sw.js registration.
+## Локальная разработка
+- Используйте статический сервер (`serve.bat` или любой HTTP-сервер).
+- Этап сборки не требуется.
+- Сервис-воркер можно отключить, удалив регистрацию `sw.js`.
 
-## Known limitations
-- Sharing excludes assets.
-- Snapshots are not encrypted; they are encoded and optionally compressed.
-- External network requests are blocked by CSP.
+## Известные ограничения
+- Шеринг не включает ресурсы (assets).
+- Снимки не зашифрованы; они закодированы и опционально сжаты.
+- Внешние сетевые запросы заблокированы политикой CSP.
