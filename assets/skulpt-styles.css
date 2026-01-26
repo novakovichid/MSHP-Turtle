@@ -262,7 +262,7 @@ body {
 .workspace {
   flex: 1;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 420px;
+  grid-template-columns: 240px minmax(0, 1fr) 440px;
   grid-template-rows: minmax(0, 1fr) 200px;
   gap: 16px;
   padding: 16px 20px 20px;
@@ -654,9 +654,10 @@ body {
   border: 1px solid var(--border);
   border-radius: 4px;
   touch-action: none;
-  margin: auto;
-  display: block;
+  position: relative;
+  box-sizing: content-box;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
 }
 
 .turtle-host {
@@ -666,7 +667,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px;
+  padding: 8px;
 }
 
 #turtle-canvas canvas {
