@@ -2187,59 +2187,45 @@ function setSkulptTurtleAssets(assets) {
   revokeSkulptAssetUrls();
   const assetMap = {};
   const urlMap = new Map();
-  if (!assets || !assets.length) {
-    // Создаем прокси-объект, который будет искать изображения динамически
-    return new Proxy(assetMap, {
-      get(target, prop) {
-        if (prop in target) {
-          return target[prop];
-        }
-        // Если свойство не найдено, пытаемся загрузить из файловой системы
-        const url = getSkulptAssetUrl(String(prop));
-        if (url) {
-          target[prop] = url;
-          return url;
-        }
-        return undefined;
+
+  if (assets && assets.length) {
+    assets.forEach((asset) => {
+      const name = String(asset.name || "");
+      if (!name || !isImageAsset(name, asset.mime)) {
+        return;
+      }
+      if (typeof URL === "undefined" || typeof Blob === "undefined") {
+        return;
+      }
+      let url = null;
+      try {
+        const blob = new Blob([asset.data], { type: asset.mime || guessImageMime(name) });
+        url = URL.createObjectURL(blob);
+      } catch (error) {
+        url = null;
+      }
+      if (!url) {
+        return;
+      }
+      const normalized = normalizeAssetName(name);
+      assetMap[name] = url;
+      assetMap[normalized] = url;
+      assetMap[`/project/${name}`] = url;
+      assetMap[`./${name}`] = url;
+      assetMap[`/project/${normalized}`] = url;
+      assetMap[`./${normalized}`] = url;
+      urlMap.set(name, url);
+      urlMap.set(normalized, url);
+      urlMap.set(`/project/${name}`, url);
+      urlMap.set(`./${name}`, url);
+      urlMap.set(`/project/${normalized}`, url);
+      urlMap.set(`./${normalized}`, url);
+      if (asset.blobId) {
+        urlMap.set(asset.blobId, url);
       }
     });
   }
-  assets.forEach((asset) => {
-    const name = String(asset.name || "");
-    if (!name || !isImageAsset(name, asset.mime)) {
-      return;
-    }
-    if (typeof URL === "undefined" || typeof Blob === "undefined") {
-      return;
-    }
-    let url = null;
-    try {
-      const blob = new Blob([asset.data], { type: asset.mime || guessImageMime(name) });
-      url = URL.createObjectURL(blob);
-    } catch (error) {
-      url = null;
-    }
-    if (!url) {
-      return;
-    }
-    const normalized = normalizeAssetName(name);
-    assetMap[name] = url;
-    assetMap[normalized] = url;
-    assetMap[`/project/${name}`] = url;
-    assetMap[`./${name}`] = url;
-    assetMap[`/project/${normalized}`] = url;
-    assetMap[`./${normalized}`] = url;
-    urlMap.set(name, url);
-    urlMap.set(normalized, url);
-    urlMap.set(`/project/${name}`, url);
-    urlMap.set(`./${name}`, url);
-    urlMap.set(`/project/${normalized}`, url);
-    urlMap.set(`./${normalized}`, url);
-    // Также сохраняем по blobId для совместимости, если нужно
-    if (asset.blobId) {
-      urlMap.set(asset.blobId, url);
-    }
-  });
+
   state.skulptAssetUrls = urlMap;
 
   return new Proxy(assetMap, {
@@ -2254,6 +2240,14 @@ function setSkulptTurtleAssets(assets) {
         return url;
       }
       return undefined;
+    },
+    has(target, prop) {
+      const key = String(prop);
+      if (key in target) {
+        return true;
+      }
+      const url = getSkulptAssetUrl(key);
+      return !!url;
     }
   });
 }
