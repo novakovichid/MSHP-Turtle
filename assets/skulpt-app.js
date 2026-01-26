@@ -2071,46 +2071,7 @@ function skulptRead(path) {
   const normalized = normalizeSkulptPath(path);
 
   if (files && files.has(normalized)) {
-    let content = files.get(normalized);
-    // Absolute-Global Patch: Prepend turtle fix to project files
-    // Using a more compact and re-entrant version
-    if (normalized.endsWith(".py") && !content.includes("_TURTLE_PATCH_ID_")) {
-      content = `
-# _TURTLE_PATCH_ID_
-def _patch_turtle():
-    try:
-        import turtle
-        if getattr(turtle, '_patched', False): return
-        def _u(*a, **k):
-            n = next((x for x in a if isinstance(x, str)), None)
-            if not n: return
-            try:
-                s = turtle.Screen()
-                if hasattr(s, '_shapes') and n not in s._shapes:
-                    try: s._shapes[n] = turtle.Shape("image", n)
-                    except: s._shapes[n] = n
-            except: pass
-        _os = turtle.Turtle.shape
-        def _ps(*a, **k):
-            n = next((x for x in a if isinstance(x, str)), None)
-            if n: _u(n)
-            try: return _os(*a, **k)
-            except: 
-                try: return _os(*a, **k)
-                except: pass
-        if hasattr(turtle, 'Screen'):
-            turtle.Screen.addshape = _u
-            turtle.Screen.register_shape = _u
-        turtle.Turtle.shape = _ps
-        turtle.addshape = _u
-        turtle.register_shape = _u
-        turtle.shape = _ps
-        turtle._patched = True
-    except: pass
-_patch_turtle()
-` + content;
-    }
-    return content;
+    return files.get(normalized);
   }
   if (assets && assets.has(normalized)) {
     return assets.get(normalized);
@@ -2454,82 +2415,64 @@ function getTurtleSetupCode(assets) {
     .filter((name) => name && !name.startsWith("/") && isImageAsset(name));
 
   return `
-# _ULTIMATE_TURTLE_PATCH_
-def _apply_ultimate_patch():
+import turtle
+import sys
+
+def _universal_reg(*args, **kwargs):
+    name = None
+    for a in args:
+        if isinstance(a, str): name = a; break
+    if not name: return
     try:
-        import turtle
-        import sys
-        
-        if getattr(turtle, '_ultimate_patched', False): return
-        
-        # Helper to find any string in a list of arguments (for name lookup)
-        def _get_name(args):
-            for a in args:
-                if isinstance(a, str): return a
-            return None
+        s = turtle.Screen()
+        if not hasattr(s, '_shapes'): s._shapes = {}
+        if name not in s._shapes:
+            try: s._shapes[name] = turtle.Shape("image", name)
+            except: s._shapes[name] = name
+    except: pass
 
-        # Universal Handler for addshape, register_shape
-        def _universal_reg(*args, **kwargs):
-            name = _get_name(args)
-            if not name: return
-            try:
-                s = turtle.Screen()
-                if hasattr(s, '_shapes') and name not in s._shapes:
-                    # In Skulpt, sometimes a Shape object is needed, 
-                    # sometimes just the name/URL string is enough.
-                    # We try to mimic the constructor if it exists.
-                    try:
-                        if hasattr(turtle, 'Shape'):
-                            s._shapes[name] = turtle.Shape("image", name)
-                        else:
-                            s._shapes[name] = name
-                    except:
-                        s._shapes[name] = name
-            except: pass
+# Wrap Screen for resilience
+_orig_screen = turtle.Screen
+def _patched_screen(*args, **kwargs):
+    s = _orig_screen(*args, **kwargs)
+    s.addshape = _universal_reg
+    s.register_shape = _universal_reg
+    return s
 
-        # Wrapper for methods to handle (self, name) correctly
-        def _method_wrapper(orig_func, is_reg=False):
-            def _wrapped(*args, **kwargs):
-                if is_reg: _universal_reg(*args)
-                try: return orig_func(*args, **kwargs)
-                except Exception as e:
-                    # If signature mismatch (TypeError), try calling without 'self' 
-                    # if it looks like it was passed but not wanted.
-                    if isinstance(e, TypeError) and len(args) > 1:
-                        try: return orig_func(*args[1:], **kwargs)
-                        except: raise e
-                    raise e
-            return _wrapped
-
-        # Patch Turtle.shape to ensure registration before use
-        _orig_t_shape = turtle.Turtle.shape
-        def _patched_t_shape(*args, **kwargs):
-            name = _get_name(args)
-            if name: _universal_reg(name)
-            return _orig_t_shape(*args, **kwargs)
-
-        # Apply Global Function Patches
-        turtle.addshape = _universal_reg
-        turtle.register_shape = _universal_reg
-        turtle.shape = _patched_t_shape
-        
-        # Apply Class Method Patches (Wrap existing ones to be more lenient)
-        if hasattr(turtle, 'Screen'):
-            turtle.Screen.addshape = _method_wrapper(turtle.Screen.addshape, True)
-            turtle.Screen.register_shape = _method_wrapper(turtle.Screen.register_shape, True)
-        
-        if hasattr(turtle, 'Turtle'):
-            turtle.Turtle.shape = _patched_t_shape
-
-        turtle._ultimate_patched = True
-        
-        # Immediate registration of all known assets
-        for n in ${JSON.stringify(assetNames)}:
-            _universal_reg(n)
+# Wrap Turtle for registration-on-the-fly
+_orig_t_shape = turtle.Turtle.shape
+def _patched_t_shape(*args, **kwargs):
+    name = None
+    for a in args:
+        if isinstance(a, str): name = a; break
+    if name: _universal_reg(name)
+    try: return _orig_t_shape(*args, **kwargs)
     except:
-        pass
+        try: return _orig_t_shape(*args, **kwargs)
+        except: pass
 
-_apply_ultimate_patch()
+# Wrap bgpic
+_orig_bgpic = turtle.Screen.bgpic
+def _patched_bgpic(*args, **kwargs):
+    name = None
+    for a in args:
+        if isinstance(a, str): name = a; break
+    if name and name != "nopic": _universal_reg(name)
+    try: return _orig_bgpic(*args, **kwargs)
+    except: pass
+
+# Apply to module
+turtle.Screen = _patched_screen
+turtle.addshape = _universal_reg
+turtle.register_shape = _universal_reg
+turtle.shape = _patched_t_shape
+turtle.bgpic = _patched_bgpic
+turtle.Turtle.shape = _patched_t_shape
+turtle.Screen.bgpic = _patched_bgpic
+
+# Pre-register assets
+for n in ${JSON.stringify(assetNames)}:
+    _universal_reg(n)
 `;
 }
 
@@ -2676,12 +2619,18 @@ async function runActiveFile() {
     } catch (error) {
       // Ignore cleanup failures and proceed with execution.
     }
-    let finalCode = String(file.content || "");
     if (usesTurtle) {
-      finalCode = getTurtleSetupCode(assets) + "\n" + finalCode;
+      const setupCode = getTurtleSetupCode(assets);
+      try {
+        await Sk.misceval.asyncToPromise(() =>
+          Sk.importMainWithBody("__init_turtle__", false, setupCode, true)
+        );
+      } catch (err) {
+        console.warn("Turtle patch failed", err);
+      }
     }
     await Sk.misceval.asyncToPromise(() =>
-      Sk.importMainWithBody("__main__", false, finalCode, true)
+      Sk.importMainWithBody("__main__", false, String(file.content || ""), true)
     );
     if (state.runToken !== runToken) {
       return;
