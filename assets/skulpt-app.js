@@ -1960,7 +1960,7 @@ function configureSkulptRuntime(files, assets, options = {}) {
   const turtleSize = getTurtleCanvasSize();
   const debugSession = null; // options.debugger || null;
   // const enableDebugging = Boolean(debugSession); // Forced off
-  Sk.inBrowser = false;
+  Sk.inBrowser = true;
   if (!Sk.asserts) {
     Sk.asserts = {
       assert: () => true,
@@ -2019,8 +2019,7 @@ function skulptRead(path) {
     return files.get(normalized);
   }
   if (assets && assets.has(normalized)) {
-    const asset = assets.get(normalized);
-    return asset.data;
+    return assets.get(normalized);
   }
   if (Sk.builtinFiles && Sk.builtinFiles["files"] && Sk.builtinFiles["files"][path] !== undefined) {
     return Sk.builtinFiles["files"][path];
@@ -2248,6 +2247,28 @@ function setSkulptTurtleAssets(assets) {
       }
       const url = getSkulptAssetUrl(key);
       return !!url;
+    },
+    ownKeys(target) {
+      const keys = new Set(Object.keys(target));
+      if (state.skulptAssetUrls) {
+        state.skulptAssetUrls.forEach((_, key) => keys.add(key));
+      }
+      return Array.from(keys);
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      if (prop in target) {
+        return Object.getOwnPropertyDescriptor(target, prop);
+      }
+      const url = getSkulptAssetUrl(String(prop));
+      if (url) {
+        return {
+          value: url,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        };
+      }
+      return undefined;
     }
   });
 }
