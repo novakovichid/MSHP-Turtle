@@ -2004,8 +2004,8 @@ function configureSkulptRuntime(files, assets, options = {}) {
   Sk.execStart = Date.now();
   Sk.TurtleGraphics = {
     target: "turtle-canvas",
-    width: turtleSize.width,
-    height: turtleSize.height,
+    width: TURTLE_CANVAS_WIDTH,
+    height: TURTLE_CANVAS_HEIGHT,
     assets: turtleAssets
   };
   resetNativeTurtle();
@@ -2339,20 +2339,18 @@ for name, module in list(sys.modules.items()):
         sys.modules.pop(name, None)
 `;
 
-const TURTLE_PATCH_CODE = `
+
+const TURTLE_SETUP_CODE = `
+import turtle
 try:
-    import turtle as _t
-    def _mshp_addshape(self, *args, **kwargs):
+    screen = turtle.Screen()
+    for name in turtle.assets.keys():
         try:
-            if hasattr(self, "register_shape"):
-                return self.register_shape(*args, **kwargs)
+             # Skip internal paths and non-images
+            if not name.startswith("/"):
+                screen.addshape(name)
         except Exception:
             pass
-        try:
-            return _t.register_shape(*args, **kwargs)
-        except Exception:
-            return None
-    _t.Screen.addshape = _mshp_addshape
 except Exception:
     pass
 `;
@@ -2421,7 +2419,9 @@ async function runActiveFile() {
   const files = getCurrentFiles();
   const usesTurtle = updateTurtleVisibilityForRun(files);
   clearConsole();
-  clearTurtleCanvas();
+  if (els.turtleCanvas) {
+    els.turtleCanvas.innerHTML = "";
+  }
   updateRunStatus("running");
 
   state.stdinQueue = [];
@@ -2462,10 +2462,10 @@ async function runActiveFile() {
     if (usesTurtle) {
       try {
         await Sk.misceval.asyncToPromise(() =>
-          Sk.importMainWithBody("__turtle_patch__", false, TURTLE_PATCH_CODE, true)
+          Sk.importMainWithBody("__turtle_setup__", false, TURTLE_SETUP_CODE, true)
         );
       } catch (error) {
-        // Ignore patch failures and proceed with execution.
+        // Ignore setup failures
       }
     }
     await Sk.misceval.asyncToPromise(() =>
