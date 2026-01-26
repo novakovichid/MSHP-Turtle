@@ -163,7 +163,8 @@ const els = {
   workspace: document.querySelector(".workspace"),
   turtlePane: document.querySelector(".turtle-pane"),
   turtleCanvas: document.getElementById("turtle-canvas"),
-  turtleClear: document.getElementById("turtle-clear")
+  turtleClear: document.getElementById("turtle-clear"),
+  renameBtn: document.getElementById("rename-btn")
 };
 
 function createUuid() {
@@ -253,6 +254,9 @@ function bindUi() {
   }
   els.newProject.addEventListener("click", () => createProjectAndOpen());
   els.clearRecent.addEventListener("click", clearRecentProjects);
+  if (els.renameBtn) {
+    els.renameBtn.addEventListener("click", renameProject);
+  }
 
   els.runBtn.addEventListener("click", runActiveFile);
   els.stopBtn.addEventListener("click", stopRun);
@@ -419,6 +423,7 @@ async function openProject(projectId) {
 
   setMode("project");
   renderProject();
+  updateTurtleVisibilityForRun(state.project.files);
   await rememberRecent(project.projectId);
 }
 
@@ -543,6 +548,7 @@ async function openSnapshot(shareId, payload) {
 
     setMode("snapshot");
     renderSnapshot();
+    updateTurtleVisibilityForRun(getEffectiveFiles());
   } catch (error) {
     console.error(error);
     showToast("Не удалось открыть снимок.");
@@ -562,6 +568,9 @@ function setMode(mode) {
   els.remixBtn.classList.toggle("hidden", !isSnapshot);
   els.resetBtn.classList.toggle("hidden", !isSnapshot);
   els.saveIndicator.classList.toggle("hidden", !isProject);
+  if (els.renameBtn) {
+    els.renameBtn.classList.toggle("hidden", !isProject);
+  }
 
   const disableEdits = state.embed.readonly;
   els.editor.readOnly = disableEdits;
@@ -1634,6 +1643,51 @@ async function resetSnapshot() {
   state.activeFile = state.snapshot.baseline.lastActiveFile || state.snapshot.baseline.files[0]?.name || null;
   renderSnapshot();
 }
+
+async function renameProject() {
+  if (state.mode !== "project" || !state.project) {
+    return;
+  }
+  const currentTitle = state.project.title || "Без названия";
+  const modalBody = `
+    <div class="modal-card">
+      <h3>Переименовать проект</h3>
+      <input type="text" id="rename-input" class="modal-input" value="${currentTitle.replace(/"/g, "&quot;")}" placeholder="Введите название..." />
+      <div class="modal-actions">
+        <button class="btn ghost" data-action="close">Отмена</button>
+        <button class="btn primary" data-action="confirm">Сохранить</button>
+      </div>
+    </div>
+  `;
+  openModal(modalBody, async (action) => {
+    if (action === "confirm") {
+      const input = document.getElementById("rename-input");
+      const newTitle = input ? input.value.trim() : "";
+      if (newTitle && newTitle !== currentTitle) {
+        state.project.title = newTitle;
+        state.project.updatedAt = Date.now();
+        await saveProject(state.project);
+        renderProject();
+        showToast("Проект переименован");
+      }
+    }
+    closeModal();
+  });
+
+  // Handle Enter key for rename modal
+  const input = document.getElementById("rename-input");
+  if (input) {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const confirmBtn = els.modal.querySelector('[data-action="confirm"]');
+        if (confirmBtn) confirmBtn.click();
+      }
+    });
+    setTimeout(() => input.focus(), 100);
+  }
+}
+
 async function exportProject() {
   if (state.mode !== "project") {
     return;
@@ -2400,64 +2454,82 @@ function getTurtleSetupCode(assets) {
     .filter((name) => name && !name.startsWith("/") && isImageAsset(name));
 
   return `
-def _apply_turtle_patch():
+# _ULTIMATE_TURTLE_PATCH_
+def _apply_ultimate_patch():
     try:
         import turtle
         import sys
         
-        if getattr(turtle, '__patched', False): return
+        if getattr(turtle, '_ultimate_patched', False): return
         
-        # Universal handler for addshape/register_shape
-        def _universal_reg(*args, **kwargs):
-            name = None
+        # Helper to find any string in a list of arguments (for name lookup)
+        def _get_name(args):
             for a in args:
-                if isinstance(a, str): name = a; break
+                if isinstance(a, str): return a
+            return None
+
+        # Universal Handler for addshape, register_shape
+        def _universal_reg(*args, **kwargs):
+            name = _get_name(args)
             if not name: return
             try:
                 s = turtle.Screen()
                 if hasattr(s, '_shapes') and name not in s._shapes:
-                    try: s._shapes[name] = turtle.Shape("image", name)
-                    except: s._shapes[name] = name
+                    # In Skulpt, sometimes a Shape object is needed, 
+                    # sometimes just the name/URL string is enough.
+                    # We try to mimic the constructor if it exists.
+                    try:
+                        if hasattr(turtle, 'Shape'):
+                            s._shapes[name] = turtle.Shape("image", name)
+                        else:
+                            s._shapes[name] = name
+                    except:
+                        s._shapes[name] = name
             except: pass
 
-        # Wrap Screen() to return a patched object and ensure globals are set
-        _orig_screen_factory = turtle.Screen
-        def _patched_screen_factory(*args, **kwargs):
-            s = _orig_screen_factory(*args, **kwargs)
-            s.addshape = _universal_reg
-            s.register_shape = _universal_reg
-            return s
-        
-        # Wrap Turtle.shape to ensure auto-registration
-        _orig_turtle_shape = turtle.Turtle.shape
-        def _patched_turtle_shape(self_or_name, name=None):
-            target = name if name else (self_or_name if isinstance(self_or_name, str) else None)
-            if target: _universal_reg(target)
-            try:
-                if isinstance(self_or_name, str): return _orig_turtle_shape(self_or_name)
-                return _orig_turtle_shape(self_or_name, name)
-            except:
-                try: # Second attempt after registration
-                    if isinstance(self_or_name, str): return _orig_turtle_shape(self_or_name)
-                    return _orig_turtle_shape(self_or_name, name)
-                except: pass
+        # Wrapper for methods to handle (self, name) correctly
+        def _method_wrapper(orig_func, is_reg=False):
+            def _wrapped(*args, **kwargs):
+                if is_reg: _universal_reg(*args)
+                try: return orig_func(*args, **kwargs)
+                except Exception as e:
+                    # If signature mismatch (TypeError), try calling without 'self' 
+                    # if it looks like it was passed but not wanted.
+                    if isinstance(e, TypeError) and len(args) > 1:
+                        try: return orig_func(*args[1:], **kwargs)
+                        except: raise e
+                    raise e
+            return _wrapped
 
-        # Apply patches
-        turtle.Screen = _patched_screen_factory
+        # Patch Turtle.shape to ensure registration before use
+        _orig_t_shape = turtle.Turtle.shape
+        def _patched_t_shape(*args, **kwargs):
+            name = _get_name(args)
+            if name: _universal_reg(name)
+            return _orig_t_shape(*args, **kwargs)
+
+        # Apply Global Function Patches
         turtle.addshape = _universal_reg
         turtle.register_shape = _universal_reg
-        turtle.shape = _patched_turtle_shape
-        turtle.Turtle.shape = _patched_turtle_shape
+        turtle.shape = _patched_t_shape
         
-        turtle.__patched = True
+        # Apply Class Method Patches (Wrap existing ones to be more lenient)
+        if hasattr(turtle, 'Screen'):
+            turtle.Screen.addshape = _method_wrapper(turtle.Screen.addshape, True)
+            turtle.Screen.register_shape = _method_wrapper(turtle.Screen.register_shape, True)
         
-        # Auto-register project images
+        if hasattr(turtle, 'Turtle'):
+            turtle.Turtle.shape = _patched_t_shape
+
+        turtle._ultimate_patched = True
+        
+        # Immediate registration of all known assets
         for n in ${JSON.stringify(assetNames)}:
             _universal_reg(n)
     except:
         pass
 
-_apply_turtle_patch()
+_apply_ultimate_patch()
 `;
 }
 
@@ -2478,7 +2550,41 @@ function detectTurtleUsage(files) {
   if (!files || !files.length) {
     return false;
   }
-  return files.some((file) => TURTLE_IMPORT_RE.test(String(file.content ?? "")));
+  // Recursive import scanner: only show turtle pane if graphics are reachable from main.py
+  const entryFile = files.find((f) => f.name === MAIN_FILE);
+  if (!entryFile) {
+    return false;
+  }
+
+  const visited = new Set();
+  const queue = [entryFile.name];
+  visited.add(entryFile.name);
+
+  while (queue.length > 0) {
+    const currentName = queue.shift();
+    const file = files.find((f) => f.name === currentName);
+    if (!file) {
+      continue;
+    }
+
+    const content = String(file.content ?? "");
+    if (TURTLE_IMPORT_RE.test(content)) {
+      return true;
+    }
+
+    // Find other project imports
+    const importRegex = /(?:^|\n)\s*(?:from|import)\s+([A-Za-z0-9._-]+)/g;
+    let match;
+    while ((match = importRegex.exec(content)) !== null) {
+      const importedModule = match[1].split(".")[0];
+      const fileName = `${importedModule}.py`;
+      if (!visited.has(fileName) && files.some((f) => f.name === fileName)) {
+        visited.add(fileName);
+        queue.push(fileName);
+      }
+    }
+  }
+  return false;
 }
 
 function setTurtlePaneVisible(visible) {
@@ -2493,9 +2599,14 @@ function setTurtlePaneVisible(visible) {
 }
 
 function updateTurtleVisibilityForRun(files) {
+  // Use entry point or all project files to check for turtle
   const usesTurtle = detectTurtleUsage(files);
   state.turtleUsedLastRun = usesTurtle;
   setTurtlePaneVisible(usesTurtle);
+  // Ensure the workspace layout updates
+  if (els.workspace) {
+    els.workspace.classList.toggle("no-turtle", !usesTurtle);
+  }
   return usesTurtle;
 }
 

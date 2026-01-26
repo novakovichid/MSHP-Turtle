@@ -208,9 +208,40 @@ body {
   gap: 4px;
 }
 
+.project-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .project-title {
   font-size: 16px;
   font-weight: 600;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-icon {
+  background: transparent;
+  border: none;
+  padding: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  opacity: 0.5;
+  transition: all 0.2s ease;
+  line-height: 1;
+}
+
+.btn-icon:hover {
+  opacity: 1;
+  background: rgba(28, 107, 255, 0.1);
+  transform: scale(1.1);
 }
 
 .project-mode {
@@ -262,8 +293,8 @@ body {
 .workspace {
   flex: 1;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 440px;
-  grid-template-rows: minmax(0, 1fr) 200px;
+  grid-template-columns: 240px 1fr 440px;
+  grid-template-rows: 1fr auto;
   gap: 16px;
   padding: 16px 20px 20px;
   overflow: auto;
@@ -271,24 +302,28 @@ body {
 }
 
 .workspace.no-turtle {
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 240px 1fr;
 }
 
 .workspace.no-turtle .turtle-pane {
   display: none;
 }
 
-.workspace.no-turtle .console-pane {
+.workspace .console-pane {
   grid-column: 2 / 3;
+  grid-row: 2 / 3;
+  min-height: 140px;
 }
 
-.workspace.no-turtle .editor-pane {
-  grid-row: 1 / 2;
+.workspace:not(.no-turtle) .console-pane {
+  height: 160px;
+  /* Compressed when turtle active */
 }
 
 .workspace.no-turtle .console-pane {
-  grid-row: 2 / 3;
+  min-height: 200px;
 }
+
 
 .sidebar {
   display: grid;
@@ -383,7 +418,7 @@ body {
 
 .editor-pane {
   grid-column: 2 / 3;
-  grid-row: 1 / 3;
+  grid-row: 1 / 2;
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -612,7 +647,7 @@ body {
 
 .turtle-pane {
   grid-column: 3 / 4;
-  grid-row: 1 / 2;
+  grid-row: 1 / 3;
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid var(--border);
   border-radius: 16px;
