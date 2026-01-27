@@ -260,10 +260,10 @@ async function init() {
     showToast("Storage fallback: changes will not persist in this browser.");
   }
   loadSettings();
-/**
- * Binds all UI event handlers: buttons, hotkeys, editor, file list, etc.
- * Must be called before any UI interactions.
- */
+  /**
+   * Binds all UI event handlers: buttons, hotkeys, editor, file list, etc.
+   * Must be called before any UI interactions.
+   */
   initSkulpt();
   await router();
   window.addEventListener("hashchange", router);
@@ -346,11 +346,11 @@ function setGuardMessage(title, message) {
 
 function showView(view) {
   els.viewLanding.classList.toggle("hidden", view !== "landing");
-/**
- * Handles URL hash changes and navigates to the appropriate view.
- * Routes: "/"=home, "/p/{projectId}"=edit project, "/s/{shareId}"=view snapshot, "/embed"=embed mode.
- * @async
- */
+  /**
+   * Handles URL hash changes and navigates to the appropriate view.
+   * Routes: "/"=home, "/p/{projectId}"=edit project, "/s/{shareId}"=view snapshot, "/embed"=embed mode.
+   * @async
+   */
   els.viewIde.classList.toggle("hidden", view !== "ide");
   state.mode = view === "landing" ? "landing" : state.mode;
 }
@@ -380,10 +380,10 @@ async function router() {
       openEphemeralProject();
     }
   } else {
-/**
- * Parses the current URL hash into route components (action, projectId, etc.).
- * @returns {{action: string, projectId: string|null, shareId: string|null, query: Object}}
- */
+    /**
+     * Parses the current URL hash into route components (action, projectId, etc.).
+     * @returns {{action: string, projectId: string|null, shareId: string|null, query: Object}}
+     */
     showToast("Неизвестный маршрут, переход на главную.");
     location.hash = "#/";
   }
@@ -438,11 +438,11 @@ function applyEmbedSettings(query) {
   const hideConsole = state.embed.mode === "runOnly";
 
   els.editor.closest(".editor-pane").classList.toggle("hidden", hideEditor);
-/**
- * Opens an existing project by ID and switches to edit mode.
- * @async
- * @param {string} projectId - The project ID to open
- */
+  /**
+   * Opens an existing project by ID and switches to edit mode.
+   * @async
+   * @param {string} projectId - The project ID to open
+   */
   els.sidebar.classList.toggle("hidden", hideEditor);
   els.consoleOutput.closest(".console-pane").classList.toggle("hidden", hideConsole);
 }
@@ -456,10 +456,10 @@ async function openProject(projectId) {
   state.project = project;
   state.snapshot = null;
   state.activeFile = project.lastActiveFile || project.files[0]?.name || null;
-/**
- * Creates a new project with default files and opens it in edit mode.
- * @async
- */
+  /**
+   * Creates a new project with default files and opens it in edit mode.
+   * @async
+   */
   ensureMainProject();
   state.activeFile = MAIN_FILE;
 
@@ -486,12 +486,12 @@ async function createProjectAndOpen() {
 
 function openEphemeralProject() {
   const project = createDefaultProject();
-/**
- * Creates a default project structure with main.py.
- * @param {string} projectId - Unique project identifier
- * @param {string} title - Project title
- * @returns {Object} Project object with files array
- */
+  /**
+   * Creates a default project structure with main.py.
+   * @param {string} projectId - Unique project identifier
+   * @param {string} title - Project title
+   * @returns {Object} Project object with files array
+   */
   state.project = project;
   state.snapshot = null;
   state.activeFile = project.lastActiveFile || project.files[0]?.name || null;
@@ -550,13 +550,13 @@ function ensureMainProject() {
 
 function ensureMainSnapshot() {
   if (!state.snapshot) {
-/**
- * Opens a shared snapshot by shareId and optional payload, switching to snapshot mode (read-only).
- * Creates draft for local edits.
- * @async
- * @param {string} shareId - The snapshot share ID
- * @param {string} payload - Compressed/encoded project data
- */
+    /**
+     * Opens a shared snapshot by shareId and optional payload, switching to snapshot mode (read-only).
+     * Creates draft for local edits.
+     * @async
+     * @param {string} shareId - The snapshot share ID
+     * @param {string} payload - Compressed/encoded project data
+     */
     return;
   }
   const { baseline, draft } = state.snapshot;

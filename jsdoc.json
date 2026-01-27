@@ -1,9 +1,12 @@
 {
-  "source": {
-    "include": ["assets/skulpt-app.js", "assets/worker.js"]
-  },
-  "opts": {
-    "destination": "./docs/api",
-    "readme": "./README.md"
-  }
+    "source": {
+        "include": [
+            "assets/skulpt-app.js",
+            "assets/worker.js"
+        ]
+    },
+    "opts": {
+        "destination": "./docs/api",
+        "readme": "./README.md"
+    }
 }

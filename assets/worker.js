@@ -7,24 +7,24 @@ let stdinHeader = null;
 let stdinBuffer = null;
 let stdinMode = "message";
 const forceSharedBase =
-  typeof self !== "undefined" &&
-  self.navigator &&
-  (/Safari/i.test(self.navigator.userAgent || "") && !/Chrome|Chromium|Edg/i.test(self.navigator.userAgent || ""));
+    typeof self !== "undefined" &&
+    self.navigator &&
+    (/Safari/i.test(self.navigator.userAgent || "") && !/Chrome|Chromium|Edg/i.test(self.navigator.userAgent || ""));
 if (typeof self !== "undefined") {
-  self.force_shared = forceSharedBase;
+    self.force_shared = forceSharedBase;
 }
 const stdinDecoder = typeof TextDecoder !== "undefined"
-  ? new TextDecoder()
-  : {
-      decode: (input) => {
-        const bytes = input instanceof Uint8Array ? input : new Uint8Array(input || []);
-        let binary = "";
-        const chunk = 0x8000;
-        for (let i = 0; i < bytes.length; i += chunk) {
-          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    ? new TextDecoder()
+    : {
+        decode: (input) => {
+            const bytes = input instanceof Uint8Array ? input : new Uint8Array(input || []);
+            let binary = "";
+            const chunk = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunk) {
+                binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+            }
+            return decodeURIComponent(escape(binary));
         }
-        return decodeURIComponent(escape(binary));
-      }
     };
 
 /**
@@ -33,24 +33,24 @@ const stdinDecoder = typeof TextDecoder !== "undefined"
  * @returns {string} Decoded string
  */
 function decodeUtf8Fallback(bytes) {
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  try {
-    return decodeURIComponent(escape(binary));
-  } catch (error) {
-    return binary;
-  }
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    try {
+        return decodeURIComponent(escape(binary));
+    } catch (error) {
+        return binary;
+    }
 }
 
 function decodeSharedBytes(bytes) {
-  try {
-    return String(stdinDecoder.decode(bytes));
-  } catch (error) {
-    return decodeUtf8Fallback(bytes);
-  }
+    try {
+        return String(stdinDecoder.decode(bytes));
+    } catch (error) {
+        return decodeUtf8Fallback(bytes);
+    }
 }
 
 /**
@@ -59,28 +59,28 @@ function decodeSharedBytes(bytes) {
  * @param {MessageEvent} event - The message event from the main thread
  */
 self.onmessage = async (event) => {
-  const message = event.data;
-  if (message.type === "stdin_response") {
-    handleStdinResponse(message);
-    return;
-  }
-  if (message.type === "turtle_event") {
-    if (self.turtle_recv) {
-      self.turtle_recv(message.event);
+    const message = event.data;
+    if (message.type === "stdin_response") {
+        handleStdinResponse(message);
+        return;
     }
-    return;
-  }
-  if (message.type === "get_file") {
-    handleGetFile(message);
-    return;
-  }
-  if (message.type === "init") {
-    await initializeRuntime(message);
-    return;
-  }
-  if (message.type === "run") {
-    await runCode(message);
-  }
+    if (message.type === "turtle_event") {
+        if (self.turtle_recv) {
+            self.turtle_recv(message.event);
+        }
+        return;
+    }
+    if (message.type === "get_file") {
+        handleGetFile(message);
+        return;
+    }
+    if (message.type === "init") {
+        await initializeRuntime(message);
+        return;
+    }
+    if (message.type === "run") {
+        await runCode(message);
+    }
 };
 
 /**
@@ -88,252 +88,252 @@ self.onmessage = async (event) => {
  * @param {Object} message - Message with stdin value
  */
 function handleStdinResponse(message) {
-  const value = typeof message.value === "string" ? message.value : "";
-  if (stdinResolver) {
-    const resolve = stdinResolver;
-    stdinResolver = null;
-    resolve(value);
-    return;
-  }
-  stdinQueue.push(value);
+    const value = typeof message.value === "string" ? message.value : "";
+    if (stdinResolver) {
+        const resolve = stdinResolver;
+        stdinResolver = null;
+        resolve(value);
+        return;
+    }
+    stdinQueue.push(value);
 }
 
 function requestStdin() {
-  if (stdinQueue.length) {
-    return Promise.resolve(stdinQueue.shift());
-  }
-  return new Promise((resolve) => {
-    stdinResolver = resolve;
-    postMessage({ type: "stdin_request", mode: "message" });
-  });
+    if (stdinQueue.length) {
+        return Promise.resolve(stdinQueue.shift());
+    }
+    return new Promise((resolve) => {
+        stdinResolver = resolve;
+        postMessage({ type: "stdin_request", mode: "message" });
+    });
 }
 
 function setupSharedStdin(shared) {
-  if (!shared || typeof Atomics === "undefined" || typeof Atomics.wait !== "function") {
-    return false;
-  }
-  try {
-    stdinShared = shared;
-    stdinHeader = new Int32Array(shared, 0, 2);
-    stdinBuffer = new Uint8Array(shared, 8);
-  } catch (error) {
-    stdinShared = null;
-    stdinHeader = null;
-    stdinBuffer = null;
-    return false;
-  }
-  stdinMode = "shared";
-  const readShared = () => {
-    const flag = Atomics.load(stdinHeader, 0);
-    if (flag !== 1) {
-      return null;
+    if (!shared || typeof Atomics === "undefined" || typeof Atomics.wait !== "function") {
+        return false;
     }
-    const length = Atomics.load(stdinHeader, 1);
-    const safeLength = Number.isFinite(length) ? Math.max(0, Math.min(length, stdinBuffer.length)) : 0;
-    let slice = stdinBuffer.subarray(0, safeLength);
-    Atomics.store(stdinHeader, 0, 0);
-    Atomics.store(stdinHeader, 1, 0);
-    let decoded = decodeSharedBytes(slice);
-    if (!decoded && safeLength > 0) {
-      return decodeUtf8Fallback(slice);
+    try {
+        stdinShared = shared;
+        stdinHeader = new Int32Array(shared, 0, 2);
+        stdinBuffer = new Uint8Array(shared, 8);
+    } catch (error) {
+        stdinShared = null;
+        stdinHeader = null;
+        stdinBuffer = null;
+        return false;
     }
-    if (!decoded && safeLength === 0) {
-      let fallbackLength = 0;
-      while (fallbackLength < stdinBuffer.length && stdinBuffer[fallbackLength] !== 0) {
-        fallbackLength += 1;
-      }
-      if (fallbackLength > 0) {
-        slice = stdinBuffer.subarray(0, fallbackLength);
-        decoded = decodeSharedBytes(slice);
-      }
-    }
-    return decoded;
-  };
-  self.stdin_blocking = () => {
-    if (!stdinHeader || !stdinBuffer) {
-      return "";
-    }
-    const ready = readShared();
-    if (ready !== null) {
-      return ready;
-    }
-    postMessage({ type: "stdin_request", mode: "shared" });
-    Atomics.wait(stdinHeader, 0, 0);
-    const next = readShared();
-    return next === null ? "" : next;
-  };
-  return true;
+    stdinMode = "shared";
+    const readShared = () => {
+        const flag = Atomics.load(stdinHeader, 0);
+        if (flag !== 1) {
+            return null;
+        }
+        const length = Atomics.load(stdinHeader, 1);
+        const safeLength = Number.isFinite(length) ? Math.max(0, Math.min(length, stdinBuffer.length)) : 0;
+        let slice = stdinBuffer.subarray(0, safeLength);
+        Atomics.store(stdinHeader, 0, 0);
+        Atomics.store(stdinHeader, 1, 0);
+        let decoded = decodeSharedBytes(slice);
+        if (!decoded && safeLength > 0) {
+            return decodeUtf8Fallback(slice);
+        }
+        if (!decoded && safeLength === 0) {
+            let fallbackLength = 0;
+            while (fallbackLength < stdinBuffer.length && stdinBuffer[fallbackLength] !== 0) {
+                fallbackLength += 1;
+            }
+            if (fallbackLength > 0) {
+                slice = stdinBuffer.subarray(0, fallbackLength);
+                decoded = decodeSharedBytes(slice);
+            }
+        }
+        return decoded;
+    };
+    self.stdin_blocking = () => {
+        if (!stdinHeader || !stdinBuffer) {
+            return "";
+        }
+        const ready = readShared();
+        if (ready !== null) {
+            return ready;
+        }
+        postMessage({ type: "stdin_request", mode: "shared" });
+        Atomics.wait(stdinHeader, 0, 0);
+        const next = readShared();
+        return next === null ? "" : next;
+    };
+    return true;
 }
 
 async function initializeRuntime(message) {
-  self.stdin_blocking = null;
-  const sharedReady = setupSharedStdin(message.stdinShared);
-  if (typeof self !== "undefined") {
-    self.force_shared = forceSharedBase && sharedReady;
-  }
-  if (sharedReady) {
-    stdinMode = "shared";
-  } else {
-    stdinMode = "message";
-  }
-  if (!pyodideReady) {
-    const indexURL = message.indexURL;
-    importScripts(indexURL + "pyodide.js");
-    pyodide = await loadPyodide({
-      indexURL
-    });
+    self.stdin_blocking = null;
+    const sharedReady = setupSharedStdin(message.stdinShared);
+    if (typeof self !== "undefined") {
+        self.force_shared = forceSharedBase && sharedReady;
+    }
+    if (sharedReady) {
+        stdinMode = "shared";
+    } else {
+        stdinMode = "message";
+    }
+    if (!pyodideReady) {
+        const indexURL = message.indexURL;
+        importScripts(indexURL + "pyodide.js");
+        pyodide = await loadPyodide({
+            indexURL
+        });
 
-    if (pyodide.setStdout) {
-      pyodide.setStdout({
-        batched: (text) => postMessage({ type: "stdout", data: text })
-      });
-    }
-    if (pyodide.setStderr) {
-      pyodide.setStderr({
-        batched: (text) => postMessage({ type: "stderr", data: text })
-      });
-    }
-    self.stdin = requestStdin;
-    self.send_stdout = (text) => postMessage({ type: "stdout", data: text });
-    self.turtle_send = (payload) => {
-      let event = payload;
-      if (typeof payload === "string") {
-        try {
-          event = JSON.parse(payload);
-        } catch (error) {
-          event = { type: "error", message: String(payload) };
+        if (pyodide.setStdout) {
+            pyodide.setStdout({
+                batched: (text) => postMessage({ type: "stdout", data: text })
+            });
         }
-      }
-      postMessage({ type: "turtle", event });
-    };
+        if (pyodide.setStderr) {
+            pyodide.setStderr({
+                batched: (text) => postMessage({ type: "stderr", data: text })
+            });
+        }
+        self.stdin = requestStdin;
+        self.send_stdout = (text) => postMessage({ type: "stdout", data: text });
+        self.turtle_send = (payload) => {
+            let event = payload;
+            if (typeof payload === "string") {
+                try {
+                    event = JSON.parse(payload);
+                } catch (error) {
+                    event = { type: "error", message: String(payload) };
+                }
+            }
+            postMessage({ type: "turtle", event });
+        };
 
-    await pyodide.runPythonAsync(TURTLE_SHIM);
+        await pyodide.runPythonAsync(TURTLE_SHIM);
 
-    pyodideReady = true;
-  }
-
-  stdinMode = "message";
-  self.stdin_mode = stdinMode;
-  self.set_stdin_mode = (mode) => {
-    const next = mode === "shared" && stdinShared ? "shared" : "message";
-    if (stdinMode === next) {
-      return;
+        pyodideReady = true;
     }
-    stdinMode = next;
+
+    stdinMode = "message";
     self.stdin_mode = stdinMode;
+    self.set_stdin_mode = (mode) => {
+        const next = mode === "shared" && stdinShared ? "shared" : "message";
+        if (stdinMode === next) {
+            return;
+        }
+        stdinMode = next;
+        self.stdin_mode = stdinMode;
+        postMessage({ type: "stdin_mode", mode: stdinMode });
+    };
     postMessage({ type: "stdin_mode", mode: stdinMode });
-  };
-  postMessage({ type: "stdin_mode", mode: stdinMode });
-  if (forceSharedBase && stdinShared) {
-    self.set_stdin_mode("shared");
-  }
-  postMessage({ type: "ready" });
+    if (forceSharedBase && stdinShared) {
+        self.set_stdin_mode("shared");
+    }
+    postMessage({ type: "ready" });
 }
 
 async function runCode(message) {
-  if (!pyodideReady) {
-    postMessage({ type: "stderr", data: "Среда выполнения не готова.\n" });
-    return;
-  }
+    if (!pyodideReady) {
+        postMessage({ type: "stderr", data: "Среда выполнения не готова.\n" });
+        return;
+    }
 
-  postMessage({ type: "status", state: "running" });
-  try {
-    resetFs();
-    writeFiles(message.files);
-    writeAssets(message.assets);
-    await pyodide.runPythonAsync(buildRunner(message.entry));
-    postMessage({ type: "status", state: "done" });
-  } catch (error) {
-    postMessage({ type: "stderr", data: String(error) + "\n" });
-    postMessage({ type: "status", state: "error" });
-  }
+    postMessage({ type: "status", state: "running" });
+    try {
+        resetFs();
+        writeFiles(message.files);
+        writeAssets(message.assets);
+        await pyodide.runPythonAsync(buildRunner(message.entry));
+        postMessage({ type: "status", state: "done" });
+    } catch (error) {
+        postMessage({ type: "stderr", data: String(error) + "\n" });
+        postMessage({ type: "status", state: "error" });
+    }
 }
 
 function resetFs() {
-  const FS = pyodide.FS;
-  if (!FS.analyzePath("/project").exists) {
-    FS.mkdir("/project");
-  }
-  clearDir("/project");
-  FS.chdir("/project");
+    const FS = pyodide.FS;
+    if (!FS.analyzePath("/project").exists) {
+        FS.mkdir("/project");
+    }
+    clearDir("/project");
+    FS.chdir("/project");
 }
 
 function clearDir(path) {
-  const FS = pyodide.FS;
-  const entries = FS.readdir(path);
-  entries.forEach((entry) => {
-    if (entry === "." || entry === "..") {
-      return;
-    }
-    const fullPath = path + "/" + entry;
-    const stat = FS.stat(fullPath);
-    if (FS.isDir(stat.mode)) {
-      clearDir(fullPath);
-      FS.rmdir(fullPath);
-    } else {
-      FS.unlink(fullPath);
-    }
-  });
+    const FS = pyodide.FS;
+    const entries = FS.readdir(path);
+    entries.forEach((entry) => {
+        if (entry === "." || entry === "..") {
+            return;
+        }
+        const fullPath = path + "/" + entry;
+        const stat = FS.stat(fullPath);
+        if (FS.isDir(stat.mode)) {
+            clearDir(fullPath);
+            FS.rmdir(fullPath);
+        } else {
+            FS.unlink(fullPath);
+        }
+    });
 }
 
 function writeFiles(files) {
-  const FS = pyodide.FS;
-  files.forEach((file) => {
-    FS.writeFile(`/project/${file.name}`, file.content || "", { encoding: "utf8" });
-  });
+    const FS = pyodide.FS;
+    files.forEach((file) => {
+        FS.writeFile(`/project/${file.name}`, file.content || "", { encoding: "utf8" });
+    });
 }
 
 function writeAssets(assets) {
-  const FS = pyodide.FS;
-  assets.forEach((asset) => {
-    FS.writeFile(`/project/${asset.name}`, asset.data);
-  });
+    const FS = pyodide.FS;
+    assets.forEach((asset) => {
+        FS.writeFile(`/project/${asset.name}`, asset.data);
+    });
 }
 
 function handleGetFile(message) {
-  if (!pyodideReady || !pyodide) {
-    postMessage({ type: "file_data", requestId: message.requestId, error: "Runtime not ready" });
-    return;
-  }
-  try {
-    const FS = pyodide.FS;
-    const filename = message.filename;
-    let path = filename;
-    if (!path.startsWith("/project/") && !path.startsWith("/")) {
-      path = `/project/${path}`;
+    if (!pyodideReady || !pyodide) {
+        postMessage({ type: "file_data", requestId: message.requestId, error: "Runtime not ready" });
+        return;
     }
-    const pathInfo = FS.analyzePath(path);
-    if (pathInfo.exists && !pathInfo.isRoot) {
-      const data = FS.readFile(path, { encoding: "binary" });
-      // Преобразуем Uint8Array в ArrayBuffer для передачи через postMessage
-      let buffer;
-      if (data instanceof Uint8Array) {
-        if (data.byteOffset === 0 && data.byteLength === data.buffer.byteLength) {
-          buffer = data.buffer;
-        } else {
-          buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    try {
+        const FS = pyodide.FS;
+        const filename = message.filename;
+        let path = filename;
+        if (!path.startsWith("/project/") && !path.startsWith("/")) {
+            path = `/project/${path}`;
         }
-      } else {
-        buffer = data;
-      }
-      postMessage({ 
-        type: "file_data", 
-        requestId: message.requestId, 
-        filename: filename,
-        data: buffer,
-        mime: message.mime || null
-      }, [buffer]);
-    } else {
-      postMessage({ type: "file_data", requestId: message.requestId, error: "File not found" });
+        const pathInfo = FS.analyzePath(path);
+        if (pathInfo.exists && !pathInfo.isRoot) {
+            const data = FS.readFile(path, { encoding: "binary" });
+            // Преобразуем Uint8Array в ArrayBuffer для передачи через postMessage
+            let buffer;
+            if (data instanceof Uint8Array) {
+                if (data.byteOffset === 0 && data.byteLength === data.buffer.byteLength) {
+                    buffer = data.buffer;
+                } else {
+                    buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+                }
+            } else {
+                buffer = data;
+            }
+            postMessage({
+                type: "file_data",
+                requestId: message.requestId,
+                filename: filename,
+                data: buffer,
+                mime: message.mime || null
+            }, [buffer]);
+        } else {
+            postMessage({ type: "file_data", requestId: message.requestId, error: "File not found" });
+        }
+    } catch (error) {
+        postMessage({ type: "file_data", requestId: message.requestId, error: String(error) });
     }
-  } catch (error) {
-    postMessage({ type: "file_data", requestId: message.requestId, error: String(error) });
-  }
 }
 
 function buildRunner(entry) {
-  const entryLiteral = JSON.stringify(entry);
-  return `
+    const entryLiteral = JSON.stringify(entry);
+    return `
 import runpy, sys, os, builtins, js
 try:
     from pyodide.ffi import run_sync
