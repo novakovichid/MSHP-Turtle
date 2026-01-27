@@ -1,18 +1,22 @@
 <!doctype html>
 <html lang="ru">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'" />
   <title>MSHP-IDE - Web IDE Python</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E🐢%3C/text%3E%3C/svg%3E" />
+  <link rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E�%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="assets/styles.css" />
 </head>
+
 <body>
   <div class="ambient"></div>
   <div class="noise"></div>
 
-      <div id="guard" class="guard" role="dialog" aria-modal="true">
+  <div id="guard" class="guard" role="dialog" aria-modal="true">
     <div class="guard-card">
       <h2>Loading...</h2>
       <p>Preparing the runtime. Please wait.</p>
@@ -139,7 +143,8 @@ print("Привет,", name)</pre>
         </div>
         <pre id="console-output" class="console-output"></pre>
         <div class="console-input-row">
-          <input id="console-input" class="console-input" type="text" placeholder="Введите input и нажмите Enter" disabled />
+          <input id="console-input" class="console-input" type="text" placeholder="Введите input и нажмите Enter"
+            disabled />
           <button id="console-send" class="btn small" disabled>Отправить</button>
         </div>
       </section>
@@ -162,4 +167,5 @@ print("Привет,", name)</pre>
 
   <script type="module" src="assets/app.js"></script>
 </body>
+
 </html>
