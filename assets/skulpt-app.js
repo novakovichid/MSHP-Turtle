@@ -340,7 +340,7 @@ function bindUi() {
     // Stop execution
     if (event.altKey && event.key === "x") {
       event.preventDefault();
-      stopExecution();
+      stopRun();
     }
     // Clear console
     if (event.altKey && event.key === "c") {
