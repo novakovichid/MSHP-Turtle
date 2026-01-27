@@ -132,6 +132,7 @@ const els = {
   projectTitle: document.getElementById("project-title"),
   projectMode: document.getElementById("project-mode"),
   saveIndicator: document.getElementById("save-indicator"),
+  restartIdeBtn: document.getElementById("restart-ide-btn"),
   runBtn: document.getElementById("run-btn"),
   stopBtn: document.getElementById("stop-btn"),
   clearBtn: document.getElementById("clear-btn"),
@@ -277,6 +278,9 @@ function bindUi() {
   els.clearRecent.addEventListener("click", clearRecentProjects);
   if (els.renameBtn) {
     els.renameBtn.addEventListener("click", renameProject);
+  }
+  if (els.restartIdeBtn) {
+    els.restartIdeBtn.addEventListener("click", restartIdeWithCacheClear);
   }
 
   els.runBtn.addEventListener("click", runActiveFile);
@@ -659,7 +663,9 @@ function setMode(mode) {
   els.fileRename.disabled = disableEdits;
   els.fileDuplicate.disabled = disableEdits;
   els.fileDelete.disabled = disableEdits;
-  els.assetInput.disabled = disableEdits || !isProject;
+  if (els.assetInput) {
+    els.assetInput.disabled = disableEdits || !isProject;
+  }
 }
 
 function renderProject() {
@@ -704,6 +710,9 @@ function renderFiles(files) {
 }
 
 function renderAssets(assets) {
+  if (!els.assetList) {
+    return; // Asset panel is hidden/deprecated
+  }
   els.assetList.innerHTML = "";
   if (!assets.length) {
     const empty = document.createElement("div");
@@ -1847,6 +1856,74 @@ async function resetSnapshot() {
   };
   state.activeFile = state.snapshot.baseline.lastActiveFile || state.snapshot.baseline.files[0]?.name || null;
   renderSnapshot();
+}
+
+async function restartIdeWithCacheClear() {
+  const ok = await confirmModal({
+    title: "Перезапуск IDE",
+    message: "IDE будет перезапущена. Локальные данные и кеш будут очищены. Несохранённые изменения пропадут.",
+    confirmText: "Перезапустить"
+  });
+  if (!ok) {
+    return;
+  }
+  setGuardMessage("Перезапуск", "Очищаем кеш и перезагружаем IDE...");
+  showGuard(true);
+  try {
+    if (state.db) {
+      try {
+        state.db.close();
+      } catch (error) {
+        console.warn("Failed to close db", error);
+      }
+    }
+    if ("indexedDB" in window) {
+      await new Promise((resolve) => {
+        let request = null;
+        try {
+          request = indexedDB.deleteDatabase("mshp-ide-skulpt");
+        } catch (error) {
+          console.warn("IndexedDB delete failed", error);
+          resolve();
+          return;
+        }
+        request.onsuccess = () => resolve();
+        request.onerror = () => resolve();
+        request.onblocked = () => resolve();
+      });
+    }
+    if ("caches" in window) {
+      try {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((key) => caches.delete(key)));
+      } catch (error) {
+        console.warn("CacheStorage delete failed", error);
+      }
+    }
+    try {
+      if ("sessionStorage" in window) {
+        sessionStorage.clear();
+      }
+    } catch (error) {
+      console.warn("SessionStorage clear failed", error);
+    }
+    try {
+      if ("localStorage" in window) {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith("shp-") || key.startsWith("mshp-"))) {
+            keys.push(key);
+          }
+        }
+        keys.forEach((key) => localStorage.removeItem(key));
+      }
+    } catch (error) {
+      console.warn("LocalStorage clear failed", error);
+    }
+  } finally {
+    location.reload();
+  }
 }
 
 async function renameProject() {
