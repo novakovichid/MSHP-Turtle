@@ -2298,8 +2298,11 @@ function setSkulptTurtleAssets(assets) {
 
   return new Proxy(assetMap, {
     get(target, prop) {
+      if (typeof prop === "symbol") {
+        return target[prop];
+      }
       const key = String(prop);
-      if (key in target) {
+      if (Object.prototype.hasOwnProperty.call(target, key)) {
         return target[key];
       }
       const url = getSkulptAssetUrl(key);
@@ -2310,8 +2313,11 @@ function setSkulptTurtleAssets(assets) {
       return undefined;
     },
     has(target, prop) {
+      if (typeof prop === "symbol") {
+        return prop in target;
+      }
       const key = String(prop);
-      if (key in target) {
+      if (Object.prototype.hasOwnProperty.call(target, key)) {
         return true;
       }
       const url = getSkulptAssetUrl(key);
@@ -2325,7 +2331,7 @@ function setSkulptTurtleAssets(assets) {
       return Array.from(keys);
     },
     getOwnPropertyDescriptor(target, prop) {
-      if (prop in target) {
+      if (Object.prototype.hasOwnProperty.call(target, prop)) {
         return Object.getOwnPropertyDescriptor(target, prop);
       }
       const url = getSkulptAssetUrl(String(prop));
@@ -2419,56 +2425,105 @@ import turtle
 import sys
 
 def _universal_reg(*args, **kwargs):
-    name = None
-    for a in args:
-        if isinstance(a, str): name = a; break
-    if not name: return
     try:
+        name = None
+        shape = None
+        # Support both (name) and (self, name) or (name, shape) etc.
+        for a in args:
+            if isinstance(a, str):
+                if name is None: name = a
+            elif name is not None and shape is None:
+                shape = a
+        
+        if 'name' in kwargs: name = kwargs['name']
+        if 'shape' in kwargs: shape = kwargs['shape']
+        
+        if not isinstance(name, str) or not name or len(name) > 1000: return
+
         s = turtle.Screen()
         if not hasattr(s, '_shapes'): s._shapes = {}
-        if name not in s._shapes:
-            try: s._shapes[name] = turtle.Shape("image", name)
-            except: s._shapes[name] = name
-    except: pass
+        
+        # Check if it's likely an image based on extension
+        lower_name = name.lower()
+        is_image = any(lower_name.endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"])
+        
+        # Find the Shape class robustly
+        ShapeClass = getattr(turtle, "Shape", None)
+        if not ShapeClass and hasattr(s, '_shapes') and s._shapes:
+            for val in s._shapes.values():
+                if hasattr(val, '_type'):
+                    ShapeClass = type(val)
+                    break
 
-# Wrap Screen for resilience
-_orig_screen = turtle.Screen
-def _patched_screen(*args, **kwargs):
-    s = _orig_screen(*args, **kwargs)
-    s.addshape = _universal_reg
-    s.register_shape = _universal_reg
-    return s
-
-# Wrap Turtle for registration-on-the-fly
-_orig_t_shape = turtle.Turtle.shape
-def _patched_t_shape(*args, **kwargs):
-    name = None
-    for a in args:
-        if isinstance(a, str): name = a; break
-    if name: _universal_reg(name)
-    try: return _orig_t_shape(*args, **kwargs)
+        if ShapeClass:
+            if shape is not None:
+                s._shapes[name] = ShapeClass("polygon", shape)
+            elif is_image or name not in (s.getshapes() if hasattr(s, 'getshapes') else []):
+                s._shapes[name] = ShapeClass("image", name)
+        else:
+            s._shapes[name] = name
     except:
-        try: return _orig_t_shape(*args, **kwargs)
-        except: pass
+        pass
 
-# Wrap bgpic
-_orig_bgpic = turtle.Screen.bgpic
-def _patched_bgpic(*args, **kwargs):
-    name = None
-    for a in args:
-        if isinstance(a, str): name = a; break
-    if name and name != "nopic": _universal_reg(name)
-    try: return _orig_bgpic(*args, **kwargs)
+# --- Class Method Patches ---
+
+# Patch Turtle.shape
+_orig_t_shape = turtle.Turtle.shape
+def _patched_t_shape(self, *args, **kwargs):
+    try:
+        name = None
+        for a in args:
+            if isinstance(a, str): name = a; break
+        if name: _universal_reg(name)
     except: pass
+    return _orig_t_shape(self, *args, **kwargs)
+turtle.Turtle.shape = _patched_t_shape
 
-# Apply to module
-turtle.Screen = _patched_screen
+# Patch Screen.addshape
+turtle.Screen.addshape = _universal_reg
+turtle.Screen.register_shape = _universal_reg
+
+# Patch Screen.bgpic
+_orig_s_bgpic = turtle.Screen.bgpic
+def _patched_s_bgpic(self, *args, **kwargs):
+    try:
+        name = None
+        for a in args:
+            if isinstance(a, str): name = a; break
+        if name and name != "nopic": _universal_reg(name)
+    except: pass
+    return _orig_s_bgpic(self, *args, **kwargs)
+turtle.Screen.bgpic = _patched_s_bgpic
+
+# --- Module Function Patches ---
+
+# Patch turtle.addshape
 turtle.addshape = _universal_reg
 turtle.register_shape = _universal_reg
-turtle.shape = _patched_t_shape
-turtle.bgpic = _patched_bgpic
-turtle.Turtle.shape = _patched_t_shape
-turtle.Screen.bgpic = _patched_bgpic
+
+# Patch turtle.shape
+_orig_mod_shape = turtle.shape
+def _patched_mod_shape(*args, **kwargs):
+    try:
+        name = None
+        for a in args:
+            if isinstance(a, str): name = a; break
+        if name: _universal_reg(name)
+    except: pass
+    return _orig_mod_shape(*args, **kwargs)
+turtle.shape = _patched_mod_shape
+
+# Patch turtle.bgpic
+_orig_mod_bgpic = turtle.bgpic
+def _patched_mod_bgpic(*args, **kwargs):
+    try:
+        name = None
+        for a in args:
+            if isinstance(a, str): name = a; break
+        if name and name != "nopic": _universal_reg(name)
+    except: pass
+    return _orig_mod_bgpic(*args, **kwargs)
+turtle.bgpic = _patched_mod_bgpic
 
 # Pre-register assets
 for n in ${JSON.stringify(assetNames)}:
