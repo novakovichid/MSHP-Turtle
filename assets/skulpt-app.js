@@ -1999,15 +1999,28 @@ function submitConsoleInput() {
   if (!value && !state.stdinWaiting && !state.stdinResolver) {
     return;
   }
-  appendConsole(`${value}\n`, false);
+  // Split input by lines and process each separately
+  const lines = value.split("\n");
+  lines.forEach((line) => {
+    appendConsole(`${line}\n`, false);
+  });
+  
+  // If waiting for input, deliver the first line
   if (state.stdinResolver) {
     const resolver = state.stdinResolver;
     state.stdinResolver = null;
     state.stdinWaiting = false;
-    resolver(value);
+    resolver(lines[0] || "");
+    // Add remaining lines to queue
+    for (let i = 1; i < lines.length; i++) {
+      state.stdinQueue.push(lines[i]);
+    }
     return;
   }
-  state.stdinQueue.push(value);
+  // Add all lines to queue
+  lines.forEach((line) => {
+    state.stdinQueue.push(line);
+  });
 }
 
 function deliverInput() {
