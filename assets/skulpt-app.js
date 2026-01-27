@@ -322,9 +322,35 @@ function bindUi() {
     if (!els.modal.classList.contains("hidden")) {
       return;
     }
-    if (event.key === "F8") {
+    // Run code
+    if (event.key === "F8" || (event.altKey && event.key === "r")) {
       event.preventDefault();
       runActiveFile();
+    }
+    // Stop execution
+    if (event.altKey && event.key === "x") {
+      event.preventDefault();
+      stopExecution();
+    }
+    // Clear console
+    if (event.altKey && event.key === "c") {
+      event.preventDefault();
+      clearConsole();
+    }
+    // Focus on editor (Alt+1)
+    if (event.altKey && event.key === "1") {
+      event.preventDefault();
+      els.editor.focus();
+    }
+    // Focus on console input (Alt+2)
+    if (event.altKey && event.key === "2") {
+      event.preventDefault();
+      els.consoleInput.focus();
+    }
+    // Focus on turtle canvas (Alt+3)
+    if (event.altKey && event.key === "3") {
+      event.preventDefault();
+      els.turtleCanvas.focus();
     }
   });
 }
@@ -2947,7 +2973,12 @@ function showHotkeysModal() {
     <div class="modal-card">
       <h3>${title}</h3>
       <ul class="hotkeys-list">
-        <li><strong>F8</strong> — ${runLabel}</li>
+        <li><strong>F8</strong> или <strong>Alt+R</strong> — ${runLabel}</li>
+        <li><strong>Alt+X</strong> — Остановить выполнение</li>
+        <li><strong>Alt+C</strong> — Очистить консоль</li>
+        <li><strong>Alt+1</strong> — Фокус на редактор кода</li>
+        <li><strong>Alt+2</strong> — Фокус на консоль (для input)</li>
+        <li><strong>Alt+3</strong> — Фокус на черепаху</li>
       </ul>
       <div class="modal-actions">
         <button class="btn primary" data-action="close">\u041e\u043a</button>
