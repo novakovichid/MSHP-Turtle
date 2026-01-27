@@ -370,6 +370,36 @@ body {
   min-height: 200px;
 }
 
+.workspace.console-right {
+  grid-template-columns: 240px minmax(0, 1fr) 320px 440px;
+  grid-template-rows: 1fr;
+}
+
+.workspace.console-right.no-turtle {
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
+}
+
+.workspace.console-right .sidebar {
+  grid-row: 1 / 2;
+}
+
+.workspace.console-right .editor-pane {
+  grid-column: 2 / 3;
+  grid-row: 1 / 2;
+}
+
+.workspace.console-right .console-pane {
+  grid-column: 3 / 4;
+  grid-row: 1 / 2;
+  min-height: 0;
+  height: auto;
+}
+
+.workspace.console-right .turtle-pane {
+  grid-column: 4 / 5;
+  grid-row: 1 / 2;
+}
+
 
 .sidebar {
   display: grid;

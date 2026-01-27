@@ -161,6 +161,7 @@ const els = {
   consoleInput: document.getElementById("console-input"),
   consoleSend: document.getElementById("console-send"),
   runStatus: document.getElementById("run-status"),
+  consoleLayoutToggle: document.getElementById("console-layout-toggle"),
   workspace: document.querySelector(".workspace"),
   turtlePane: document.querySelector(".turtle-pane"),
   turtleCanvas: document.getElementById("turtle-canvas"),
@@ -296,6 +297,9 @@ function bindUi() {
   els.wrapBtn.addEventListener("click", toggleWrap);
   if (els.hotkeysBtn) {
     els.hotkeysBtn.addEventListener("click", showHotkeysModal);
+  }
+  if (els.consoleLayoutToggle) {
+    els.consoleLayoutToggle.addEventListener("click", toggleConsoleLayout);
   }
   if (els.turtleSpeedRange) {
     els.turtleSpeedRange.addEventListener("input", onTurtleSpeedInput);
@@ -2941,6 +2945,25 @@ function setTurtlePaneVisible(visible) {
   if (els.workspace) {
     els.workspace.classList.toggle("no-turtle", !nextVisible);
   }
+}
+
+function setConsoleLayout(right) {
+  if (!els.workspace) {
+    return;
+  }
+  const next = Boolean(right);
+  els.workspace.classList.toggle("console-right", next);
+  if (els.consoleLayoutToggle) {
+    els.consoleLayoutToggle.textContent = next ? "Консоль снизу" : "Консоль справа";
+    els.consoleLayoutToggle.setAttribute("aria-pressed", String(next));
+  }
+}
+
+function toggleConsoleLayout() {
+  if (!els.workspace) {
+    return;
+  }
+  setConsoleLayout(!els.workspace.classList.contains("console-right"));
 }
 
 function updateTurtleVisibilityForRun(files) {
