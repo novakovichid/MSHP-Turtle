@@ -104,7 +104,15 @@ print("Привет,", name)</pre>
           <div id="file-list" class="file-list"></div>
         </div>
 
-        <div class="panel">
+        <!-- 
+          Панель "Ресурсы" временно скрыта.
+          Причина: Skulpt не поддерживает загрузку изображений как форм черепахи.
+          Это архитектурное ограничение Skulpt (в отличие от trinket.io, которая использует 
+          собственный turtle.js модуль). Для полноценной работы нужна переписанная реализация 
+          turtle graphics или обновление Skulpt до версии с поддержкой image shapes.
+          Функционал законсервирован, но код для загрузки ассетов остаётся в JavaScript коде.
+        -->
+        <!-- div class="panel" hidden>
           <div class="panel-header">
             <div class="panel-title">Ресурсы</div>
             <div class="panel-actions">
@@ -113,7 +121,7 @@ print("Привет,", name)</pre>
             </div>
           </div>
           <div id="asset-list" class="asset-list"></div>
-        </div>
+        </div -->
       </aside>
 
       <section class="editor-pane">

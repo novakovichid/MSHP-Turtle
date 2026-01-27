@@ -146,12 +146,12 @@ const els = {
   turtleSpeedLabel: document.getElementById("turtle-speed-label"),
   sidebar: document.getElementById("sidebar"),
   fileList: document.getElementById("file-list"),
-  assetList: document.getElementById("asset-list"),
+  assetList: document.getElementById("asset-list"), // Панель "Ресурсы" скрыта - см. комментарий перед onAssetUpload()
   fileCreate: document.getElementById("file-create"),
   fileRename: document.getElementById("file-rename"),
   fileDuplicate: document.getElementById("file-duplicate"),
   fileDelete: document.getElementById("file-delete"),
-  assetInput: document.getElementById("asset-input"),
+  assetInput: document.getElementById("asset-input"), // Законсервировано - см. комментарий перед onAssetUpload()
   fileTabs: document.getElementById("file-tabs"),
   lineNumbers: document.getElementById("line-numbers"),
   editorHighlight: document.getElementById("editor-highlight"),
@@ -278,7 +278,10 @@ function bindUi() {
   els.fileRename.addEventListener("click", () => renameFile());
   els.fileDuplicate.addEventListener("click", () => duplicateFile());
   els.fileDelete.addEventListener("click", () => deleteFile());
-  els.assetInput.addEventListener("change", onAssetUpload);
+  if (els.assetInput) {
+    // Обработчик остаётся в коде для возможности восстановления функционала
+    els.assetInput.addEventListener("change", onAssetUpload);
+  }
 
   els.editor.addEventListener("input", onEditorInput);
   els.editor.addEventListener("keydown", onEditorKeydown);
@@ -1216,6 +1219,23 @@ function updateDraftFile(name, content) {
   scheduleDraftSave();
 }
 
+/**
+ * ЗАКОНСЕРВИРОВАНО: Загрузка ресурсов (изображений)
+ * 
+ * Причина: Skulpt не поддерживает загрузку изображений как форм черепахи.
+ * Это архитектурное ограничение - Skulpt's Shape класс был разработан только для
+ * полигонов (массивов координат). Когда вызывается Shape("image", name), создаётся
+ * объект, но нет механизма для загрузки актуального файла PNG/JPG или рендеринга
+ * через canvas drawImage().
+ * 
+ * Trinket.io работает, потому что использует собственный turtle.js модуль (JavaScript)
+ * вместо встроенного Skulpt turtle, с явной поддержкой Image DOM элементов.
+ * 
+ * Решение: либо переписать turtle модуль как в Trinket, либо обновить Skulpt
+ * до версии с поддержкой image shapes, либо использовать другую библиотеку графики.
+ * 
+ * Функция остаётся в коде для возможности восстановления в будущем.
+ */
 async function onAssetUpload(event) {
   if (state.mode !== "project") {
     showToast("Ресурсы доступны только в проектах.");
