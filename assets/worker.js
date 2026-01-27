@@ -27,6 +27,11 @@ const stdinDecoder = typeof TextDecoder !== "undefined"
       }
     };
 
+/**
+ * Decodes UTF-8 bytes to string using TextDecoder with fallback.
+ * @param {Uint8Array} bytes - The bytes to decode
+ * @returns {string} Decoded string
+ */
 function decodeUtf8Fallback(bytes) {
   let binary = "";
   const chunk = 0x8000;
@@ -48,6 +53,11 @@ function decodeSharedBytes(bytes) {
   }
 }
 
+/**
+ * Main message handler for the Web Worker.
+ * Handles: stdin responses, turtle events, file requests, runtime init, and code execution.
+ * @param {MessageEvent} event - The message event from the main thread
+ */
 self.onmessage = async (event) => {
   const message = event.data;
   if (message.type === "stdin_response") {
@@ -73,6 +83,10 @@ self.onmessage = async (event) => {
   }
 };
 
+/**
+ * Handles stdin response from main thread and resolves pending input promise.
+ * @param {Object} message - Message with stdin value
+ */
 function handleStdinResponse(message) {
   const value = typeof message.value === "string" ? message.value : "";
   if (stdinResolver) {

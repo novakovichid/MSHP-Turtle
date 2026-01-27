@@ -167,6 +167,12 @@ const els = {
   renameBtn: document.getElementById("rename-btn")
 };
 
+/**
+ * Generates a UUID v4 string.
+ * Uses crypto.randomUUID if available, falls back to crypto.getRandomValues,
+ * and finally to Math.random() on older browsers.
+ * @returns {string} A UUID v4 identifier
+ */
 function createUuid() {
   if (typeof crypto !== "undefined") {
     if (typeof crypto.randomUUID === "function") {
@@ -192,6 +198,12 @@ const memoryDb = {
   recent: new Map()
 };
 
+/**
+ * Extracts the appropriate key for a given object from a database store.
+ * @param {string} storeName - Store name: "projects", "blobs", "drafts", or "recent"
+ * @param {Object} value - The object to extract key from
+ * @returns {string|null} The key for this object or null if not found
+ */
 function getStoreKey(storeName, value) {
   if (!value) {
     return null;
@@ -234,6 +246,11 @@ function safeLocalSet(key, value) {
 
 init();
 
+/**
+ * Application initialization: opens database, sets up UI, loads settings, and starts router.
+ * Called once on page load. Shows loading guard while initializing.
+ * @async
+ */
 async function init() {
   showGuard(true);
   bindUi();
@@ -243,6 +260,10 @@ async function init() {
     showToast("Storage fallback: changes will not persist in this browser.");
   }
   loadSettings();
+/**
+ * Binds all UI event handlers: buttons, hotkeys, editor, file list, etc.
+ * Must be called before any UI interactions.
+ */
   initSkulpt();
   await router();
   window.addEventListener("hashchange", router);
@@ -325,6 +346,11 @@ function setGuardMessage(title, message) {
 
 function showView(view) {
   els.viewLanding.classList.toggle("hidden", view !== "landing");
+/**
+ * Handles URL hash changes and navigates to the appropriate view.
+ * Routes: "/"=home, "/p/{projectId}"=edit project, "/s/{shareId}"=view snapshot, "/embed"=embed mode.
+ * @async
+ */
   els.viewIde.classList.toggle("hidden", view !== "ide");
   state.mode = view === "landing" ? "landing" : state.mode;
 }
@@ -354,6 +380,10 @@ async function router() {
       openEphemeralProject();
     }
   } else {
+/**
+ * Parses the current URL hash into route components (action, projectId, etc.).
+ * @returns {{action: string, projectId: string|null, shareId: string|null, query: Object}}
+ */
     showToast("Неизвестный маршрут, переход на главную.");
     location.hash = "#/";
   }
@@ -408,6 +438,11 @@ function applyEmbedSettings(query) {
   const hideConsole = state.embed.mode === "runOnly";
 
   els.editor.closest(".editor-pane").classList.toggle("hidden", hideEditor);
+/**
+ * Opens an existing project by ID and switches to edit mode.
+ * @async
+ * @param {string} projectId - The project ID to open
+ */
   els.sidebar.classList.toggle("hidden", hideEditor);
   els.consoleOutput.closest(".console-pane").classList.toggle("hidden", hideConsole);
 }
@@ -421,6 +456,10 @@ async function openProject(projectId) {
   state.project = project;
   state.snapshot = null;
   state.activeFile = project.lastActiveFile || project.files[0]?.name || null;
+/**
+ * Creates a new project with default files and opens it in edit mode.
+ * @async
+ */
   ensureMainProject();
   state.activeFile = MAIN_FILE;
 
@@ -447,6 +486,12 @@ async function createProjectAndOpen() {
 
 function openEphemeralProject() {
   const project = createDefaultProject();
+/**
+ * Creates a default project structure with main.py.
+ * @param {string} projectId - Unique project identifier
+ * @param {string} title - Project title
+ * @returns {Object} Project object with files array
+ */
   state.project = project;
   state.snapshot = null;
   state.activeFile = project.lastActiveFile || project.files[0]?.name || null;
@@ -505,6 +550,13 @@ function ensureMainProject() {
 
 function ensureMainSnapshot() {
   if (!state.snapshot) {
+/**
+ * Opens a shared snapshot by shareId and optional payload, switching to snapshot mode (read-only).
+ * Creates draft for local edits.
+ * @async
+ * @param {string} shareId - The snapshot share ID
+ * @param {string} payload - Compressed/encoded project data
+ */
     return;
   }
   const { baseline, draft } = state.snapshot;
